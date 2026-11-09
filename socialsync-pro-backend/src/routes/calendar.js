@@ -11,23 +11,27 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-// 1. Récupérer les thèmes (filtrés par client si stockés en base, ou initialisés vides pour un nouveau compte)
+// 1. Récupérer les thèmes
 router.get('/themes', async (req, res) => {
   try {
     const clientId = req.clientId;
     
-    // Tenter de récupérer depuis Supabase pour ce client spécifique
     const { data, error } = await supabase
       .from('weeks_themes')
       .select('*')
       .eq('client_id', clientId);
 
+    // Si une erreur survient ou s'il n'y a pas encore de thèmes pour ce nouveau compte
     if (error || !data || data.length === 0) {
-      // Si le compte est nouveau et n'a rien, on renvoie une liste vide ou des semaines par défaut neutres
-      return res.json({ success: true, themes: [] });
+      return res.json([
+        { week: 1, title: "Thème Semaine 1" },
+        { week: 2, title: "Thème Semaine 2" },
+        { week: 3, title: "Thème Semaine 3" },
+        { week: 4, title: "Thème Semaine 4" }
+      ]);
     }
 
-    res.json({ success: true, themes: data });
+    res.json(data);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
