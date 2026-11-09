@@ -23,13 +23,20 @@ app.use(helmet());
 app.use(cors({
   origin: ['https://social-sync-pro.vercel.app', 'http://localhost:3000', 'http://localhost:5173'],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id', 'x-client-id', 'x-user-role'],
+  credentials:true
 }));
 
-// Limitation de débit globale et spécifique IA pour éviter les abus
+// Middleware pour attacher l'utilisateur / client actif aux requêtes
+app.use((req, res, next) => {
+  req.userId = req.headers['x-user-id'] || req.query.user_id;
+  req.clientId = req.headers['x-client-id'] || req.query.client_id || req.userId;
+  next();
+});
+
+// Limitation de débit globale et spécifique IA
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
@@ -37,7 +44,7 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 const aiLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 heure
+  windowMs: 60 * 60 * 1000,
   max: 20,
   message: { success: false, error: "Trop de requêtes vers l'IA, veuillez réessayer plus tard." }
 });
