@@ -116,7 +116,7 @@ export default function App() {
           .from('team_member')
           .select('role')
           .eq('id', userId)
-          .single();
+          .maybeSingle();
         
         if (roleData && roleData.role) {
           setUserRole(roleData.role);
