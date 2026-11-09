@@ -35,12 +35,9 @@ router.get('/themes', async (req, res) => {
     }
 
     // Et si des données existent en base :
-    res.json({ success: true, themes: data });
-    }
-
-    res.json(data);
+    return res.json({ success: true, themes: data });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
