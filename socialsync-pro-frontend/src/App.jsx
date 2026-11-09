@@ -428,7 +428,7 @@ export default function App() {
         formData.append('editorialCalendar', editorialCalendarFile);
       }
 
-      const res = await fetch(`${API_URL}/api/profile/update`, {
+      const res = await fetch(`${API_URL}/profile/update`, {
         method: 'PUT',
         body: formData
       });
