@@ -4,10 +4,7 @@ import CommentsManager from './components/Comments/CommentsManager';
 import Login from './components/Login';
 import { supabase } from './supabaseClient';
 import { 
-  INITIAL_WEEKS_THEMES, 
   GENERATE_28_DAYS, 
-  INITIAL_VIDEOS_TO_FILM, 
-  INITIAL_COMMENTS,
   LONG_YOUTUBE_SCRIPT_SAMPLE,
   TIME_SLOTS
 } from './data/mockData';
@@ -18,7 +15,8 @@ export default function App() {
   const [loadingSession, setLoadingSession] = useState(true);
   const [userRole, setUserRole] = useState('Community Manager'); // Rôle par défaut
 
-  const [weeksThemes, setWeeksThemes] = useState(INITIAL_WEEKS_THEMES);
+  // Initialisation à vide pour garantir l'isolation multi-utilisateurs (RLS)
+  const [weeksThemes, setWeeksThemes] = useState([]);
   const [activeTab, setActiveTab] = useState('calendar');
   const [selectedDay, setSelectedDay] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
@@ -46,11 +44,10 @@ export default function App() {
     { code: 'DEC', name: 'Décembre', startWeek: 5 }
   ];
 
-  // BIBLIOTHÈQUE DE MÉDIAS & STATUTS RBAC
-  const [mediaLibrary, setMediaLibrary] = useState([
-    { id: 1, name: "Visuel_Or_Chakras.png", type: "image", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500", size: "2.4 MB" },
-    { id: 2, name: "Reel_Introduction_Conscience.mp4", type: "video", url: "#", size: "18.2 MB" }
-  ]);
+  // BIBLIOTHÈQUE DE MÉDIAS & STATUTS RBAC ISOLÉS PAR UTILISATEUR
+  const [mediaLibrary, setMediaLibrary] = useState([]);
+  const [videosToFilm, setVideosToFilm] = useState([]);
+  const [comments, setComments] = useState([]);
   const [contentStatus, setContentStatus] = useState("Brouillon");
 
   // MINIATURES VIDÉO
@@ -60,7 +57,7 @@ export default function App() {
   const [notification, setNotification] = useState(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  const [daysList, setDaysList] = useState(() => GENERATE_28_DAYS(INITIAL_WEEKS_THEMES));
+  const [daysList, setDaysList] = useState([]);
 
   // MODALE MODIFICATION THÈME SEMAINE
   const [isEditThemeModalOpen, setIsEditThemeModalOpen] = useState(false);
@@ -88,11 +85,8 @@ export default function App() {
   const [activeStatModal, setActiveStatModal] = useState(null);
   const [activeRecommendationModal, setActiveRecommendationModal] = useState(null);
 
-  const [comments, setComments] = useState(INITIAL_COMMENTS);
-
   const [teamMembers, setTeamMembers] = useState([
-    { id: 1, name: "Frédéric Barbey", email: "frederic@barbey.fr", role: "Propriétaire", status: "Actif", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100" },
-    { id: 2, name: "Sophie Martin", email: "sophie.m@studio.com", role: "Community Manager", status: "Actif", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100" }
+    { id: 1, name: "Frédéric Barbey", email: "frederic@barbey.fr", role: "Propriétaire", status: "Actif", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100" }
   ]);
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState("Éditeur");
@@ -111,28 +105,51 @@ export default function App() {
   const [editorialCalendarFile, setEditorialCalendarFile] = useState(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
-  // RÉCUPÉRATION DE LA SESSION ET DU RÔLE DE L'UTILISATEUR AU LOGIN
+  // RÉCUPÉRATION DE LA SESSION, DU RÔLE ET DES DONNÉES SPÉCIFIQUES À L'UTILISATEUR
   useEffect(() => {
-    async function fetchUserRole(userId) {
+    async function fetchUserData(userId) {
       try {
-        const { data, error } = await supabase
+        // 1. Récupérer le rôle de l'utilisateur
+        const { data: roleData } = await supabase
           .from('team_member')
           .select('role')
           .eq('id', userId)
           .single();
         
-        if (data && data.role) {
-          setUserRole(data.role);
+        if (roleData && roleData.role) {
+          setUserRole(roleData.role);
         }
+
+        // 2. Charger les thèmes spécifiques à l'utilisateur
+        const res = await fetchThemes(userId);
+        if (res.success && res.themes && res.themes.length > 0) {
+          setWeeksThemes(res.themes);
+          setDaysList(GENERATE_28_DAYS(res.themes));
+          updateDaysListWithThemes(res.themes);
+        } else {
+          setWeeksThemes([]);
+          setDaysList(GENERATE_28_DAYS([]));
+        }
+
+        // 3. Charger les vidéos à tourner, la médiathèque et les commentaires filtrés par utilisateur
+        const { data: videosData } = await supabase.from('videos_to_film').select('*').eq('user_id', userId);
+        if (videosData) setVideosToFilm(videosData);
+
+        const { data: mediaData } = await supabase.from('media_library').select('*').eq('user_id', userId);
+        if (mediaData) setMediaLibrary(mediaData);
+
+        const { data: commentsData } = await supabase.from('comments').select('*').eq('user_id', userId);
+        if (commentsData) setComments(commentsData);
+
       } catch (err) {
-        console.error("Erreur récupération rôle utilisateur:", err);
+        console.error("Erreur récupération données utilisateur:", err);
       }
     }
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session?.user?.id) {
-        fetchUserRole(session.user.id);
+        fetchUserData(session.user.id);
       }
       setLoadingSession(false);
     });
@@ -140,7 +157,13 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session?.user?.id) {
-        fetchUserRole(session.user.id);
+        fetchUserData(session.user.id);
+      } else {
+        setWeeksThemes([]);
+        setDaysList([]);
+        setVideosToFilm([]);
+        setMediaLibrary([]);
+        setComments([]);
       }
     });
 
@@ -149,19 +172,22 @@ export default function App() {
 
   // FONCTION DE DÉCONNEXION GLOBALE
   const handleLogout = async () => {
-  try {
-    // On force la déconnexion locale et distante sans bloquer si le serveur échoue
-    await supabase.auth.signOut().catch(() => {});
-  } catch (err) {
-    console.warn("Déconnexion distante ignorée, nettoyage local forcé.");
-  } finally {
-    // Nettoyage immédiat de l'état React et du stockage local
-    setSession(null);
-    setActiveTab('calendar');
-    localStorage.removeItem('supabase.auth.token');
-    triggerNotification("Déconnexion réussie.");
-  }
-};
+    try {
+      await supabase.auth.signOut().catch(() => {});
+    } catch (err) {
+      console.warn("Déconnexion distante ignorée, nettoyage local forcé.");
+    } finally {
+      setSession(null);
+      setActiveTab('calendar');
+      setWeeksThemes([]);
+      setDaysList([]);
+      setVideosToFilm([]);
+      setMediaLibrary([]);
+      setComments([]);
+      localStorage.removeItem('supabase.auth.token');
+      triggerNotification("Déconnexion réussie.");
+    }
+  };
 
   // ENREGISTREMENT DU SERVICE WORKER & PWA
   useEffect(() => {
@@ -178,14 +204,10 @@ export default function App() {
     }
   }, []);
 
-  // CHARGEMENT INITIAL DEPUIS SUPABASE (TABLE weeks_themes)
-  useEffect(() => {
-    loadThemesFromSupabase();
-  }, []);
-
   const loadThemesFromSupabase = async () => {
     try {
-      const res = await fetchThemes();
+      const currentUserId = session?.user?.id;
+      const res = await fetchThemes(currentUserId);
       if (res.success && res.themes && res.themes.length > 0) {
         setWeeksThemes(res.themes);
         updateDaysListWithThemes(res.themes);
@@ -676,7 +698,7 @@ export default function App() {
         setActiveTab={(tab) => { setActiveTab(tab); setSelectedDay(null); }} 
         isMobileMenuOpen={isMobileMenuOpen}
         setIsMobileMenuOpen={setIsMobileMenuOpen}
-        videosCount={INITIAL_VIDEOS_TO_FILM.length}
+        videosCount={videosToFilm.length}
         commentsCount={comments.length}
         userRole={userRole}
         onLogout={handleLogout}
@@ -922,37 +944,43 @@ export default function App() {
               </label>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {mediaLibrary.map((media) => (
-                <div key={media.id} className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-3xl p-5 space-y-4 shadow-sm hover:shadow-md transition-all">
-                  <div className="w-full h-40 bg-stone-900 rounded-2xl overflow-hidden flex items-center justify-center relative">
-                    {media.type === 'image' ? (
-                      <img src={media.url} alt={media.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="text-amber-200 flex flex-col items-center gap-2">
-                        <i className="fa-solid fa-video text-3xl"></i>
-                        <span className="text-[10px] font-bold">Vidéo MP4</span>
-                      </div>
-                    )}
-                    <span className="absolute top-3 right-3 bg-stone-900/80 text-amber-200 text-[10px] px-2.5 py-1 rounded-full font-bold">
-                      {media.size}
-                    </span>
-                  </div>
+            {mediaLibrary.length === 0 ? (
+              <div className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-3xl p-12 text-center text-stone-400 text-xs">
+                Aucun média dans votre bibliothèque pour l'instant.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {mediaLibrary.map((media) => (
+                  <div key={media.id} className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-3xl p-5 space-y-4 shadow-sm hover:shadow-md transition-all">
+                    <div className="w-full h-40 bg-stone-900 rounded-2xl overflow-hidden flex items-center justify-center relative">
+                      {media.type === 'image' ? (
+                        <img src={media.url} alt={media.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="text-amber-200 flex flex-col items-center gap-2">
+                          <i className="fa-solid fa-video text-3xl"></i>
+                          <span className="text-[10px] font-bold">Vidéo MP4</span>
+                        </div>
+                      )}
+                      <span className="absolute top-3 right-3 bg-stone-900/80 text-amber-200 text-[10px] px-2.5 py-1 rounded-full font-bold">
+                        {media.size}
+                      </span>
+                    </div>
 
-                  <div className="flex items-center justify-between">
-                    <span className="font-serif font-bold text-xs text-stone-900 truncate max-w-[180px]">
-                      {media.name}
-                    </span>
-                    <button 
-                      onClick={() => { copyToClipboard(media.name, "Nom du fichier"); }}
-                      className="text-gold-700 hover:text-stone-900 text-xs font-bold"
-                    >
-                      <i className="fa-regular fa-copy"></i>
-                    </button>
+                    <div className="flex items-center justify-between">
+                      <span className="font-serif font-bold text-xs text-stone-900 truncate max-w-[180px]">
+                        {media.name}
+                      </span>
+                      <button 
+                        onClick={() => { copyToClipboard(media.name, "Nom du fichier"); }}
+                        className="text-gold-700 hover:text-stone-900 text-xs font-bold"
+                      >
+                        <i className="fa-regular fa-copy"></i>
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -962,67 +990,73 @@ export default function App() {
             <div className="bg-[#FAF7F2] border-2 border-[#E2D5C3] rounded-3xl p-6 shadow-sm space-y-2">
               <h2 className="text-2xl md:text-3xl font-serif font-bold text-stone-900 flex items-center gap-3">
                 <i className="fa-solid fa-clapperboard text-gold-600"></i>
-                <span>VIDÉOS À TOURNER (5 EN ATTENTE)</span>
+                <span>VIDÉOS À TOURNER ({videosToFilm.length} EN ATTENTE)</span>
               </h2>
               <p className="text-xs text-stone-500 font-medium">
                 Rappels automatiques (3j, 1j, quelques heures avant publication tant que la vidéo n'est pas téléversée).
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {INITIAL_VIDEOS_TO_FILM.map((video) => (
-                <div 
-                  key={video.id} 
-                  className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-3xl p-6 space-y-4 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
-                >
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between border-b border-[#E2D5C3] pb-3">
-                      <span className="text-[11px] font-bold text-stone-400 uppercase tracking-wider">
-                        À TOURNER AVANT LE
-                      </span>
-                      <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-amber-200">
-                        {video.delay}
-                      </span>
-                    </div>
-
-                    <div>
-                      <h3 className="font-serif font-bold text-stone-900 text-lg uppercase tracking-wide">
-                        {video.date}
-                      </h3>
-
-                      <div className="flex items-center gap-2 mt-2 flex-wrap">
-                        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full text-white ${video.type.includes('short') ? 'bg-amber-700' : 'bg-burgundy-700'}`}>
-                          {video.type}
+            {videosToFilm.length === 0 ? (
+              <div className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-3xl p-12 text-center text-stone-400 text-xs">
+                Aucune vidéo en attente de tournage.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {videosToFilm.map((video) => (
+                  <div 
+                    key={video.id} 
+                    className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-3xl p-6 space-y-4 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
+                  >
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between border-b border-[#E2D5C3] pb-3">
+                        <span className="text-[11px] font-bold text-stone-400 uppercase tracking-wider">
+                          À TOURNER AVANT LE
                         </span>
-                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#F4EFE6] text-stone-700 border border-[#E2D5C3] flex items-center gap-1">
-                          <i className="fa-regular fa-clock text-[9px]"></i> {video.duration}
-                        </span>
-                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
-                          {video.status}
+                        <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-amber-200">
+                          {video.delay}
                         </span>
                       </div>
+
+                      <div>
+                        <h3 className="font-serif font-bold text-stone-900 text-lg uppercase tracking-wide">
+                          {video.date}
+                        </h3>
+
+                        <div className="flex items-center gap-2 mt-2 flex-wrap">
+                          <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full text-white ${video.type.includes('short') ? 'bg-amber-700' : 'bg-burgundy-700'}`}>
+                            {video.type}
+                          </span>
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#F4EFE6] text-stone-700 border border-[#E2D5C3] flex items-center gap-1">
+                            <i className="fa-regular fa-clock text-[9px]"></i> {video.duration}
+                          </span>
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                            {video.status}
+                          </span>
+                        </div>
+                      </div>
+
+                      <p className="text-sm font-serif font-bold text-stone-900 leading-snug pt-1">
+                        {video.title}
+                      </p>
                     </div>
 
-                    <p className="text-sm font-serif font-bold text-stone-900 leading-snug pt-1">
-                      {video.title}
-                    </p>
-                  </div>
+                    <div className="flex items-center justify-between pt-4 border-t border-[#E2D5C3] text-xs">
+                      <span className="text-stone-400 font-medium">
+                        Sortie : <strong className="text-stone-600">{video.releaseDate}</strong>
+                      </span>
 
-                  <div className="flex items-center justify-between pt-4 border-t border-[#E2D5C3] text-xs">
-                    <span className="text-stone-400 font-medium">
-                      Sortie : <strong className="text-stone-600">{video.releaseDate}</strong>
-                    </span>
-
-                    <button 
-                      onClick={() => setActiveScriptModalVideo(video)}
-                      className="font-bold text-gold-700 hover:text-stone-900 transition-colors flex items-center gap-1"
-                    >
-                      Consulter script &gt;
-                    </button>
+                      <button 
+                        onClick={() => setActiveScriptModalVideo(video)}
+                        className="font-bold text-gold-700 hover:text-stone-900 transition-colors flex items-center gap-1"
+                      >
+                        Consulter script &gt;
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
