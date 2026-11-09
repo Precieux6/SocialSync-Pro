@@ -23,12 +23,19 @@ router.get('/themes', async (req, res) => {
 
     // Si une erreur survient ou s'il n'y a pas encore de thèmes pour ce nouveau compte
     if (error || !data || data.length === 0) {
-      return res.json([
-        { week: 1, title: "Thème Semaine 1" },
-        { week: 2, title: "Thème Semaine 2" },
-        { week: 3, title: "Thème Semaine 3" },
-        { week: 4, title: "Thème Semaine 4" }
-      ]);
+      return res.json({
+        success: true,
+        themes: [
+          { week: 1, title: "Thème Semaine 1" },
+          { week: 2, title: "Thème Semaine 2" },
+          { week: 3, title: "Thème Semaine 3" },
+          { week: 4, title: "Thème Semaine 4" }
+        ]
+      });
+    }
+
+    // Et si des données existent en base :
+    res.json({ success: true, themes: data });
     }
 
     res.json(data);
