@@ -10,7 +10,7 @@ import {
 } from './data/mockData';
 import { fetchThemes, updateTheme, generateCaptionWithClaude, inviteTeamMember } from './services/api';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+const API_URL = 'https://social-sync-pro-backend.vercel.app/api';
 
 export default function App() {
   const [session, setSession] = useState(null);
