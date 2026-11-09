@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 // 1. Récupérer les thèmes depuis le Backend (Supabase)
 export const fetchThemes = async () => {
