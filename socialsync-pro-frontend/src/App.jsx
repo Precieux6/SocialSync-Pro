@@ -10,6 +10,8 @@ import {
 } from './data/mockData';
 import { fetchThemes, updateTheme, generateCaptionWithClaude, inviteTeamMember } from './services/api';
 
+const API_URL = import.meta.env.VITE_API_URL || '';
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [loadingSession, setLoadingSession] = useState(true);
@@ -426,7 +428,7 @@ export default function App() {
         formData.append('editorialCalendar', editorialCalendarFile);
       }
 
-      const res = await fetch('http://localhost:5000/api/profile/update', {
+      const res = await fetch(`${API_URL}/api/profile/update`, {
         method: 'PUT',
         body: formData
       });
