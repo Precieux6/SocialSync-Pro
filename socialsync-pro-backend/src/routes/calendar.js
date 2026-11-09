@@ -11,43 +11,65 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-let weeksThemes = [...INITIAL_WEEKS_THEMES];
+// 1. Récupérer les thèmes (filtrés par client si stockés en base, ou initialisés vides pour un nouveau compte)
+router.get('/themes', async (req, res) => {
+  try {
+    const clientId = req.clientId;
+    
+    // Tenter de récupérer depuis Supabase pour ce client spécifique
+    const { data, error } = await supabase
+      .from('weeks_themes')
+      .select('*')
+      .eq('client_id', clientId);
 
-// 1. Récupérer les thèmes
-router.get('/themes', (req, res) => {
-  res.json({ success: true, themes: weeksThemes });
-});
+    if (error || !data || data.length === 0) {
+      // Si le compte est nouveau et n'a rien, on renvoie une liste vide ou des semaines par défaut neutres
+      return res.json({ success: true, themes: [] });
+    }
 
-// 2. Mettre à jour un thème
-router.put('/themes/:weekNum', (req, res) => {
-  const weekNum = parseInt(req.params.weekNum, 10);
-  const { title } = req.body;
-  const index = weeksThemes.findIndex(w => w.week === weekNum);
-  if (index !== -1) {
-    weeksThemes[index].title = title;
-    res.json({ success: true, message: `Thème de la Semaine ${weekNum} mis à jour.`, updatedWeek: weeksThemes[index] });
-  } else {
-    res.status(404).json({ success: false, message: 'Semaine non trouvée.' });
+    res.json({ success: true, themes: data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 3. Importer le fichier Excel et synchroniser avec Supabase
+// 2. Mettre à jour un thème
+router.put('/themes/:weekNum', async (req, res) => {
+  try {
+    const weekNum = parseInt(req.params.weekNum, 10);
+    const { title } = req.body;
+    const clientId = req.clientId;
+
+    const { data, error } = await supabase
+      .from('weeks_themes')
+      .update({ title })
+      .eq('week', weekNum)
+      .eq('client_id', clientId)
+      .select();
+
+    if (error) throw error;
+
+    res.json({ success: true, message: `Thème de la Semaine ${weekNum} mis à jour.`, updatedWeek: data[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. Importer le fichier Excel rattaché au client actif
 router.post('/import-excel', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: "Aucun fichier fourni." });
     }
 
-    // Lecture du fichier Excel en mémoire
+    const clientId = req.clientId;
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0]; // Feuille "Calendrier"
+    const sheetName = workbook.SheetNames[0];
     const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-    console.log(`Importation de ${sheetData.length} lignes depuis le fichier Excel...`);
-
-    // Insertion ou mise à jour dans la table Supabase 'editorial_posts'
     for (const row of sheetData) {
       await supabase.from('editorial_posts').upsert({
+        client_id: clientId, // Rattachement strict au client supervisé
         week_num: row['Semaine'],
         date: row['Date'],
         day_name: row['Jour'],
@@ -65,7 +87,7 @@ router.post('/import-excel', upload.single('file'), async (req, res) => {
 
     res.json({ 
       success: true, 
-      message: `Calendrier importé avec succès (${sheetData.length} publications synchronisées dans Supabase) !` 
+      message: `Calendrier importé avec succès (${sheetData.length} publications synchronisées pour ce client) !` 
     });
   } catch (error) {
     console.error("Erreur lors de l'import Excel :", error);
