@@ -1,0 +1,19 @@
+socialsync-pro-frontend/
+├── public/                  # Assets statiques publics
+├── src/
+│   ├── components/          # Composants modulaires de l'interface
+│   │   ├── Comments/        # Gestionnaire des commentaires et interactions
+│   │   │   └── CommentsManager.jsx
+│   │   ├── Login.jsx        # Page d'authentification Supabase
+│   │   └── Sidebar.jsx      # Barre latérale de navigation et bouton de déconnexion
+│   ├── data/
+│   │   └── mockData.js      # Données mockées (génération des 28 jours, scripts, créneaux)
+│   ├── services/
+│   │   └── api.js           # Services d'appels HTTP vers le backend sécurisé (/api/ai, /calendar, /team)
+│   ├── App.jsx              # Composant principal (gestion des états globaux, des 4 mois / 13 semaines, modales)
+│   ├── main.jsx             # Point d'entrée React
+│   ├── supabaseClient.js    # Initialisation du client Supabase (auth & sessions)
+│   └── index.css            # Styles globaux (Tailwind CSS)
+├── .env                     # Variables d'environnement frontend (Vite)
+├── package.json             # Dépendances et scripts npm
+└── vite.config.js           # Configuration de l'environnement de build Vite
