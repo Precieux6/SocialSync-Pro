@@ -4,7 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { decryptSecret } from '../utils/crypto.js';
 
 const router = express.Router();
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 
 const SYSTEM_PROMPT = `
 Vous êtes l'assistant éditorial officiel pour SocialSync Pro.
