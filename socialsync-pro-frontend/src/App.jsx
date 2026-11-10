@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import CommentsManager from './components/Comments/CommentsManager';
 import Login from './components/Login';
+import { useAuth } from './context/AuthContext';
 import { supabase } from './supabaseClient';
 import { 
   GENERATE_28_DAYS, 
@@ -13,9 +14,7 @@ import { fetchThemes, updateTheme, generateCaptionWithClaude, inviteTeamMember }
 const API_URL = 'https://social-sync-pro-backend.vercel.app/api';
 
 export default function App() {
-  const [session, setSession] = useState(null);
-  const [loadingSession, setLoadingSession] = useState(true);
-  const [userRole, setUserRole] = useState('Community Manager'); // Rôle par défaut
+  const { session, loadingSession, userRole, clientId, handleLogout } = useAuth();
 
   // Initialisation à vide pour garantir l'isolation multi-utilisateurs (RLS)
   const [weeksThemes, setWeeksThemes] = useState([]);
@@ -46,7 +45,7 @@ export default function App() {
     { code: 'DEC', name: 'Décembre', startWeek: 5 }
   ];
 
-  // BIBLIOTHÈQUE DE MÉDIAS & STATUTS RBAC ISOLÉS PAR UTILISATEUR
+  // BIBLIOTHÈQUE DE MÉDIAS & STATUTS RBAC ISOLÉS
   const [mediaLibrary, setMediaLibrary] = useState([]);
   const [videosToFilm, setVideosToFilm] = useState([]);
   const [comments, setComments] = useState([]);
@@ -107,23 +106,13 @@ export default function App() {
   const [editorialCalendarFile, setEditorialCalendarFile] = useState(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
-  // RÉCUPÉRATION DE LA SESSION, DU RÔLE ET DES DONNÉES SPÉCIFIQUES À L'UTILISATEUR
+  // CHARGEMENT DES DONNÉES SPÉCIFIQUES VIA LE CLIENT ID DU CONTEXTE
   useEffect(() => {
-    async function fetchUserData(userId) {
+    async function loadUserData(targetClientId) {
+      if (!targetClientId) return;
       try {
-        // 1. Récupérer le rôle de l'utilisateur
-        const { data: roleData } = await supabase
-          .from('team_member')
-          .select('role')
-          .eq('id', userId)
-          .maybeSingle();
-        
-        if (roleData && roleData.role) {
-          setUserRole(roleData.role);
-        }
-
-        // 2. Charger les thèmes spécifiques à l'utilisateur
-        const res = await fetchThemes(userId);
+        // 1. Charger les thèmes spécifiques
+        const res = await fetchThemes(targetClientId);
         if (res.success && res.themes && res.themes.length > 0) {
           setWeeksThemes(res.themes);
           setDaysList(GENERATE_28_DAYS(res.themes));
@@ -133,14 +122,14 @@ export default function App() {
           setDaysList(GENERATE_28_DAYS([]));
         }
 
-        // 3. Charger les vidéos à tourner, la médiathèque et les commentaires filtrés par utilisateur
-        const { data: videosData } = await supabase.from('videos_to_film').select('*').eq('user_id', userId);
+        // 2. Charger les vidéos à tourner, la médiathèque et les commentaires filtrés par client/utilisateur
+        const { data: videosData } = await supabase.from('videos_to_film').select('*').eq('user_id', targetClientId);
         if (videosData) setVideosToFilm(videosData);
 
-        const { data: mediaData } = await supabase.from('media_library').select('*').eq('user_id', userId);
+        const { data: mediaData } = await supabase.from('media_library').select('*').eq('user_id', targetClientId);
         if (mediaData) setMediaLibrary(mediaData);
 
-        const { data: commentsData } = await supabase.from('comments').select('*').eq('user_id', userId);
+        const { data: commentsData } = await supabase.from('comments').select('*').eq('user_id', targetClientId);
         if (commentsData) setComments(commentsData);
 
       } catch (err) {
@@ -148,48 +137,16 @@ export default function App() {
       }
     }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session?.user?.id) {
-        fetchUserData(session.user.id);
-      }
-      setLoadingSession(false);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session?.user?.id) {
-        fetchUserData(session.user.id);
-      } else {
-        setWeeksThemes([]);
-        setDaysList([]);
-        setVideosToFilm([]);
-        setMediaLibrary([]);
-        setComments([]);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // FONCTION DE DÉCONNEXION GLOBALE
-  const handleLogout = async () => {
-    try {
-      await supabase.auth.signOut().catch(() => {});
-    } catch (err) {
-      console.warn("Déconnexion distante ignorée, nettoyage local forcé.");
-    } finally {
-      setSession(null);
-      setActiveTab('calendar');
+    if (clientId) {
+      loadUserData(clientId);
+    } else {
       setWeeksThemes([]);
       setDaysList([]);
       setVideosToFilm([]);
       setMediaLibrary([]);
       setComments([]);
-      localStorage.removeItem('supabase.auth.token');
-      triggerNotification("Déconnexion réussie.");
     }
-  };
+  }, [clientId]);
 
   // ENREGISTREMENT DU SERVICE WORKER & PWA
   useEffect(() => {
@@ -208,8 +165,7 @@ export default function App() {
 
   const loadThemesFromSupabase = async () => {
     try {
-      const currentUserId = session?.user?.id;
-      const res = await fetchThemes(currentUserId);
+      const res = await fetchThemes(clientId);
       if (res.success && res.themes && res.themes.length > 0) {
         setWeeksThemes(res.themes);
         updateDaysListWithThemes(res.themes);
@@ -245,7 +201,7 @@ export default function App() {
   }
 
   if (!session) {
-    return <Login onLoginSuccess={(user) => setSession({ user })} />;
+    return <Login />;
   }
 
   const triggerNotification = (msg) => {
@@ -316,7 +272,6 @@ export default function App() {
     }
   };
 
-  // AGENT IA : GÉNÉRATION AUTOMATIQUE DE LA PLANIFICATION DU MOIS
   const handleGenerateAiMonthPlan = async () => {
     setIsGeneratingAiMonth(true);
     triggerNotification(`Agent IA : Génération de la programmation pour ${currentMonthObj.name} en cours...`);
@@ -346,7 +301,6 @@ export default function App() {
     }
   };
 
-  // GÉNÉRATEUR AUTOMATIQUE DE CARROUSEL EN 5 SLIDES PAR L'IA
   const handleGenerateCarouselWithAi = async () => {
     if (!selectedItem || !selectedItem.isCarousel) return;
     setIsGeneratingCarouselAi(true);
@@ -378,13 +332,12 @@ export default function App() {
     try {
       const titleToUse = selectedItem?.title || selectedDay?.theme || "Post Spirituel";
       const themeToUse = selectedDay?.theme || "Développement Spirituel";
-      const currentUserId = session?.user?.id;
 
       const res = await generateCaptionWithClaude(
         titleToUse,
         themeToUse,
         selectedPlatform,
-        currentUserId
+        clientId
       );
       
       if (res && res.success && res.caption) {
@@ -416,13 +369,12 @@ export default function App() {
   };
 
   const handleSaveProfileSettings = async () => {
-    const currentUserId = session?.user?.id;
-    if (!currentUserId) return;
+    if (!clientId) return;
 
     setIsSavingProfile(true);
     try {
       const formData = new FormData();
-      formData.append('userId', currentUserId);
+      formData.append('userId', clientId);
       formData.append('apiKey', claudeApiKey);
       if (editorialCalendarFile) {
         formData.append('editorialCalendar', editorialCalendarFile);
@@ -653,7 +605,6 @@ export default function App() {
     }
   };
 
-  // RÉPARTITION DES 13 SEMAINES SUPABASE SUR LES 4 SEMAINES DU MOIS SÉLECTIONNÉ
   const currentMonthObj = MONTHS_LIST.find(m => m.code === selectedMonth) || MONTHS_LIST[10];
   const startW = currentMonthObj.startWeek;
   
@@ -1487,7 +1438,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* LÉGENDE / CAPTION OPTIMISÉE, TAGS & REPARTAGE STORY J+1 */}
                   <div className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-2xl p-6 space-y-4 shadow-sm">
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
@@ -1545,7 +1495,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* BOUTON PUBLIER MAINTENANT & PROGRAMMER */}
                   <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-4 border-t border-[#E2D5C3]">
                     <button
                       onClick={() => triggerNotification("Publication envoyée immédiatement en direct !")}
