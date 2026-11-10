@@ -1,3 +1,4 @@
+// socialsync-pro-backend/src/server.js
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -13,6 +14,8 @@ import mediaRoutes from './routes/media.js';
 import analyticsRoutes from './routes/analytics.js';
 import profileRoutes from './routes/profile.js';
 
+import { requireAuth } from './middleware/auth.js'; // Import du middleware
+
 dotenv.config();
 
 const app = express();
@@ -24,15 +27,15 @@ app.use(cors({
   origin: ['https://social-sync-pro.vercel.app', 'http://localhost:3000', 'http://localhost:5173'],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id', 'x-client-id', 'x-user-role'],
-  credentials:true
+  credentials: true
 }));
 
-// Middleware pour attacher l'utilisateur / client actif aux requêtes
-app.use((req, res, next) => {
-  req.userId = req.headers['x-user-id'] || req.query.user_id;
-  req.clientId = req.headers['x-client-id'] || req.query.client_id || req.userId;
-  next();
-});
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Appliquer le middleware d'authentification sécurisé globalement sur les routes API
+// (Le profil gérera l'accès à l'utilisateur connecté, les autres modules cibleront req.clientId)
+app.use('/api', requireAuth);
 
 // Limitation de débit globale et spécifique IA
 const limiter = rateLimit({
@@ -50,13 +53,10 @@ const aiLimiter = rateLimit({
 });
 app.use('/api/ai/', aiLimiter);
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
-    service: 'SocialSync Pro Backend API (Supabase + Claude Anthropic + Resend + RBAC)',
+    service: 'SocialSync Pro Backend API (Supabase + Claude Anthropic + RBAC Sécurisé)',
     timestamp: new Date().toISOString()
   });
 });
@@ -71,5 +71,5 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/profile', profileRoutes);
 
 app.listen(PORT, () => {
-  console.log(`🚀 Serveur SocialSync Pro sécurisé (Claude) en écoute sur le port ${PORT}`);
+  console.log(`🚀 Serveur SocialSync Pro sécurisé (RBAC actif) en écoute sur le port ${PORT}`);
 });
