@@ -19,7 +19,19 @@ const Loader = ({ text = 'Chargement de SocialSync Pro...' }) => (
 );
 
 export default function App() {
-  const { session, loadingSession, isOwner, activeSpace, userRole, handleLogout } = useAuth();
+  const {
+    session,
+    loadingSession,
+    isOwner,
+    isOwnSpace,
+    activeSpace,
+    userRole,
+    ownerName,
+    ownerAvatar,
+    ownerBio,
+    handleLogout,
+  } = useAuth();
+
   const [tab, setTab] = useState('calendar');
   const [menuOpen, setMenuOpen] = useState(false);
   const [toast, setToast] = useState(null);
@@ -31,7 +43,7 @@ export default function App() {
   }, []);
 
   // La configuration initiale ne concerne que MON espace de propriétaire
-  const ownSpace = Boolean(session && isOwner && activeSpace?.ownerId === session.user.id);
+  const ownSpace = Boolean(session && isOwner && isOwnSpace);
 
   const refreshSetup = useCallback(async () => {
     if (!ownSpace) {
@@ -74,9 +86,8 @@ export default function App() {
     return <Onboarding onComplete={refreshSetup} onLogout={handleLogout} notify={notify} />;
   }
 
+  // Un membre ne peut pas ouvrir les pages réservées au propriétaire
   const currentTab = !isOwner && OWNER_TABS.includes(tab) ? 'calendar' : tab;
-  const userName = session.user.user_metadata?.full_name || session.user.email;
-  const spaceName = ownSpace ? 'Mon espace' : activeSpace.ownerName;
 
   const renderPage = () => {
     switch (currentTab) {
@@ -102,7 +113,7 @@ export default function App() {
 
       <div className="md:hidden bg-[#F4EFE6] border-b border-[#E2D5C3] p-4 flex items-center justify-between">
         <button onClick={() => setTab('calendar')} className="flex items-center gap-2">
-          <img src="/logo-social-sync-pro.png" alt="" className="w-8 h-8 object-contain" />
+          <div className="w-8 h-8 rounded-lg bg-stone-900 text-amber-200 font-serif font-bold flex items-center justify-center">S</div>
           <span className="font-serif font-bold text-stone-900 text-sm">SocialSync Pro</span>
         </button>
         <button onClick={() => setMenuOpen(true)} className="p-2 text-stone-700">
@@ -114,9 +125,11 @@ export default function App() {
         tab={currentTab}
         onNavigate={setTab}
         isOwner={isOwner}
-        userName={userName}
+        isOwnSpace={isOwnSpace}
+        ownerName={ownerName}
+        ownerAvatar={ownerAvatar}
+        ownerBio={ownerBio}
         roleLabel={userRole}
-        spaceName={spaceName}
         onLogout={handleLogout}
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
