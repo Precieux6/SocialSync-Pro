@@ -15,13 +15,21 @@ export const setActiveSpaceId = (id) => {
   else localStorage.removeItem(STORAGE_KEY);
 };
 
-async function request(path, { method = 'GET', body, space = true } = {}) {
+// En-têtes communs : jeton de session + espace actif si ce n'est pas le mien
+async function authHeaders({ space = true } = {}) {
   const { data: { session } } = await supabase.auth.getSession();
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = {};
   if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
 
   const ownerId = space ? activeSpaceId : null;
   if (ownerId && ownerId !== session?.user?.id) headers['X-Owner-Id'] = ownerId;
+
+  return { headers, session };
+}
+
+async function request(path, { method = 'GET', body, space = true } = {}) {
+  const { headers } = await authHeaders({ space });
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
 
   const res = await fetch(`${API_URL}${path}`, {
     method,
@@ -32,6 +40,20 @@ async function request(path, { method = 'GET', body, space = true } = {}) {
   const json = await res.json().catch(() => ({ success: false, error: 'Réponse invalide du serveur.' }));
   if (!res.ok || json.success === false) {
     throw new Error(json.error || json.message || `Erreur ${res.status}`);
+  }
+  return json;
+}
+
+// Envoi multipart (fichier) : ne pas fixer Content-Type, le navigateur ajoute la frontière
+async function upload(path, file) {
+  const { headers } = await authHeaders();
+  const form = new FormData();
+  form.append('file', file);
+
+  const res = await fetch(`${API_URL}${path}`, { method: 'POST', headers, body: form });
+  const json = await res.json().catch(() => ({ success: false, error: 'Réponse invalide du serveur.' }));
+  if (!res.ok || json.success === false) {
+    throw new Error(json.error || `Erreur ${res.status}`);
   }
   return json;
 }
@@ -60,8 +82,11 @@ export const api = {
     changePassword: (currentPassword, newPassword) =>
       request('/profile/password', { method: 'PUT', body: { currentPassword, newPassword } }),
     saveClaudeKey: (apiKey) => request('/profile/claude-key', { method: 'PUT', body: { apiKey } }),
+    deleteClaudeKey: () => request('/profile/claude-key', { method: 'DELETE' }),
     saveReferenceCalendar: (content) =>
       request('/profile/reference-calendar', { method: 'PUT', body: { content } }),
+    uploadReferenceCalendar: (file) => upload('/profile/reference-calendar/upload', file),
+    deleteReferenceCalendar: () => request('/profile/reference-calendar', { method: 'DELETE' }),
   },
 
   team: {
@@ -84,10 +109,12 @@ export const api = {
       request(`/calendar/posts?start=${start}&startWeek=${startWeek}`),
     createPost: (data) => request('/calendar/posts', { method: 'POST', body: data }),
     updatePost: (id, data) => request(`/calendar/posts/${id}`, { method: 'PUT', body: data }),
-    schedule: (id, scheduled_at) =>
-      request(`/calendar/posts/${id}/schedule`, { method: 'POST', body: { scheduled_at } }),
+    // local_datetime : « AAAA-MM-JJTHH:mm », interprétée dans le fuseau du propriétaire côté serveur
+    schedule: (id, local_datetime) =>
+      request(`/calendar/posts/${id}/schedule`, { method: 'POST', body: { local_datetime } }),
     publishNow: (id) => request(`/calendar/posts/${id}/publish-now`, { method: 'POST' }),
     cancelSchedule: (id) => request(`/calendar/posts/${id}/cancel`, { method: 'POST' }),
+    deletePost: (id) => request(`/calendar/posts/${id}`, { method: 'DELETE' }),
   },
 
   videos: {
