@@ -1,74 +1,86 @@
-// socialsync-pro-backend/src/server.js
+// socialsync-pro-backend/src/routes/ai.js
 import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
-import dotenv from 'dotenv';
+import Anthropic from '@anthropic-ai/sdk';
+import { decryptSecret } from '../utils/crypto.js';
 
-import calendarRoutes from './routes/calendar.js';
-import videosRoutes from './routes/videos.js';
-import commentsRoutes from './routes/comments.js';
-import teamRoutes from './routes/team.js';
-import aiRoutes from './routes/ai.js';
-import mediaRoutes from './routes/media.js';
-import analyticsRoutes from './routes/analytics.js';
-import profileRoutes from './routes/profile.js';
+const router = express.Router();
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
 
-import { requireAuth } from './middleware/auth.js';
+const SYSTEM_PROMPT = `
+Vous êtes l'assistant éditorial officiel pour SocialSync Pro.
+Respectez scrupuleusement ces règles :
+- TON : Inspirant, professionnel, bienveillant et pédagogique.
+- STRUCTURE : Titre accrocheur avec émoticônes ✨, paragraphes aérés, invitation à échanger en commentaire.
+`;
 
-dotenv.config();
+// Charge la clé et le calendrier de référence de l'espace actif.
+// Passe par les fonctions SQL : un membre ne lit jamais owner_settings directement.
+async function loadSpaceAiConfig(req) {
+  const { data: encrypted, error: kErr } = await req.db.rpc('get_space_ai_key', { p_owner: req.ownerId });
+  if (kErr) throw new Error('Accès à la configuration IA refusé.');
 
-const app = express();
-const PORT = process.env.PORT || 5000;
+  const apiKey = decryptSecret(encrypted);
+  if (!apiKey) {
+    return { error: 'Aucune clé Claude valide pour cet espace. Le propriétaire doit la renseigner dans Mon profil.' };
+  }
 
-app.use(helmet());
-app.use(cors({
-  origin: ['https://social-sync-pro.vercel.app', 'http://localhost:3000', 'http://localhost:5173'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Owner-Id'],
-  credentials: true,
-}));
+  const { data: ref, error: rErr } = await req.db.rpc('get_space_reference_calendar', { p_owner: req.ownerId });
+  if (rErr) throw new Error('Lecture du calendrier de référence refusée.');
 
-app.use(express.json({ limit: '200kb' }));
-app.use(express.urlencoded({ extended: true }));
+  const reference = ref?.content ? String(ref.content).slice(0, 20000) : null;
+  return { apiKey, reference };
+}
 
-app.use('/api/', rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-}));
+// POST /api/ai/generate-caption
+router.post('/generate-caption', async (req, res) => {
+  const title = String(req.body?.title || '').trim().slice(0, 300);
+  const theme = String(req.body?.theme || '').trim().slice(0, 300);
+  const platform = String(req.body?.platform || 'instagram').toUpperCase();
 
-app.use('/api/ai/', rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 20,
-  message: { success: false, error: "Trop de requêtes vers l'IA, veuillez réessayer plus tard." },
-}));
+  if (!title && !theme) {
+    return res.status(400).json({ success: false, error: 'Titre ou thème requis.' });
+  }
 
-// Publique
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  try {
+    const cfg = await loadSpaceAiConfig(req);
+    if (cfg.error) return res.status(400).json({ success: false, error: cfg.error });
+
+    let system = SYSTEM_PROMPT;
+    if (cfg.reference) {
+      system += `\n\nCONTEXTE ET STYLE DU CALENDRIER DE RÉFÉRENCE :\n${cfg.reference}`;
+    }
+
+    const anthropic = new Anthropic({ apiKey: cfg.apiKey });
+    const response = await anthropic.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 1024,
+      system,
+      messages: [{
+        role: 'user',
+        content: `Rédige une légende captivante pour la plateforme ${platform}.\nSujet/Titre : "${title || theme}"\nThème : "${theme || title}"`,
+      }],
+    });
+
+    const caption = response.content.find((b) => b.type === 'text')?.text;
+    if (!caption) {
+      return res.status(502).json({ success: false, error: 'Réponse vide de Claude.' });
+    }
+
+    res.json({ success: true, platform, caption });
+  } catch (err) {
+    console.error('generate-caption :', err);
+    res.status(500).json({ success: false, error: 'Erreur lors de la génération de la légende.' });
+  }
 });
 
-// Protégées : chaque route passe par requireAuth
-app.use('/api/calendar', requireAuth, calendarRoutes);
-app.use('/api/videos', requireAuth, videosRoutes);
-app.use('/api/comments', requireAuth, commentsRoutes);
-app.use('/api/media', requireAuth, mediaRoutes);
-app.use('/api/analytics', requireAuth, analyticsRoutes);
-app.use('/api/team', requireAuth, teamRoutes);
-app.use('/api/ai', requireAuth, aiRoutes);
-app.use('/api/profile', requireAuth, profileRoutes);
-
-app.use((req, res) => {
-  res.status(404).json({ success: false, error: 'Route introuvable.' });
+// POST /api/ai/generate-prompt : suggestion de visuel (sans appel à Claude)
+router.post('/generate-prompt', (req, res) => {
+  const theme = String(req.body?.theme || 'Sérénité').slice(0, 300);
+  const platform = req.body?.platform === 'youtube' ? '16:9' : '1:1';
+  res.json({
+    success: true,
+    prompt: `Crée un visuel symbolique haut de gamme pour le thème : "${theme}". Format ${platform}.`,
+  });
 });
 
-app.use((err, req, res, next) => {
-  console.error('Erreur serveur :', err);
-  res.status(500).json({ success: false, error: 'Erreur interne.' });
-});
-
-app.listen(PORT, () => {
-  console.log(`Serveur SocialSync Pro en écoute sur le port ${PORT}`);
-});
+export default router;
