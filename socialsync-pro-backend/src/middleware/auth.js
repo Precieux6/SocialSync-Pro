@@ -32,8 +32,7 @@ export const requireAuth = async (req, res, next) => {
     let clientId = user.id;
     let userRole = 'Propriétaire';
 
-    // Vérification dans la table "team_member" (au singulier selon ta base de données)
-    // On cherche si l'e-mail du user connecté est rattaché à une équipe existante en tant que membre
+    // Vérification dans la table "team_member"
     const { data: memberRecord } = await supabase
       .from('team_member')
       .select('team_id, role, email')
@@ -42,7 +41,6 @@ export const requireAuth = async (req, res, next) => {
 
     if (memberRecord) {
       userRole = memberRecord.role || 'Éditeur';
-      // Si team_id est renseigné, le clientId devient le team_id (ou l'ID du propriétaire de cette équipe)
       if (memberRecord.team_id) {
         clientId = memberRecord.team_id;
       }
