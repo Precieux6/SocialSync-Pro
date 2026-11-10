@@ -681,8 +681,8 @@ export default function App() {
                   </label>
                 </div>
                 <div>
-                  <h3 className="font-serif font-bold text-lg text-stone-900">Frédéric Barbey</h3>
-                  <span className="text-xs text-stone-500">frederic@barbey.fr</span>
+                  <h3 className="font-serif font-bold text-lg text-stone-900">{profileName}</h3>
+                  <span className="text-xs text-stone-500">{userEmail}</span>
                   <span className="ml-2 bg-gold-100 text-gold-800 text-[10px] font-bold px-2 py-0.5 rounded-full">{userRole}</span>
                 </div>
               </div>
@@ -692,8 +692,9 @@ export default function App() {
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-stone-600 mb-1">Prénom & Nom</label>
                     <input 
-                      type="text" 
-                      defaultValue="Frédéric Barbey" 
+                      type="text"
+                      value={profileName}
+                      onChange={(e) => setProfileName(e.target.value)} 
                       className="w-full bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-3 text-xs text-stone-900 focus:outline-none focus:border-gold-500" 
                     />
                   </div>
