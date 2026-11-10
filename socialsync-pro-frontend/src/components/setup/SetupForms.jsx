@@ -4,7 +4,6 @@ import { api } from '../../services/api';
 
 const input =
   'w-full bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-3 text-xs text-stone-900 focus:outline-none focus:border-gold-500';
-const MAX_CALENDAR = 50000;
 
 const PLATFORMS = [
   {
@@ -141,7 +140,7 @@ export function ClaudeKeyForm({ configured, onSaved, notify }) {
     try {
       await api.profile.saveClaudeKey(k);
       setApiKey('');
-      notify('Clé Claude enregistrée.');
+      notify('Clé Claude vérifiée et enregistrée.');
       if (onSaved) onSaved();
     } catch (e) {
       notify(e.message);
@@ -154,7 +153,7 @@ export function ClaudeKeyForm({ configured, onSaved, notify }) {
     <div className="space-y-3">
       <p className="text-xs text-stone-600">
         Statut : {configured ? <strong className="text-emerald-700">clé enregistrée</strong> : <strong>aucune clé</strong>}.
-        La clé est chiffrée et n'est jamais affichée.
+        La clé est vérifiée auprès d'Anthropic, chiffrée, et n'est jamais affichée.
       </p>
       <input
         type="password"
@@ -169,38 +168,29 @@ export function ClaudeKeyForm({ configured, onSaved, notify }) {
           disabled={busy || !apiKey.trim()}
           className="px-5 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow disabled:opacity-50"
         >
-          {busy ? 'Enregistrement...' : 'Enregistrer la clé'}
+          {busy ? 'Vérification...' : 'Enregistrer la clé'}
         </button>
       </div>
     </div>
   );
 }
 
-export function ReferenceCalendarForm({ configured, onSaved, notify }) {
-  const [content, setContent] = useState('');
+// Import uniquement par fichier : le serveur extrait le texte (.xlsx, .xls, .csv, .txt, .md)
+export function ReferenceCalendarForm({ configured, sourceName, onSaved, notify }) {
   const [busy, setBusy] = useState(false);
 
   const onFile = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = ''; // permet de réimporter le même fichier ensuite
     if (!file) return;
-    const text = await file.text();
-    setContent(text.slice(0, MAX_CALENDAR));
-    notify(`Fichier "${file.name}" chargé. Vérifiez le contenu puis enregistrez.`);
-  };
 
-  const save = async () => {
-    if (!content.trim()) {
-      notify('Le calendrier est vide.');
-      return;
-    }
     setBusy(true);
     try {
-      await api.profile.saveReferenceCalendar(content);
-      setContent('');
-      notify('Calendrier de référence enregistré.');
+      const r = await api.profile.uploadReferenceCalendar(file);
+      notify(`Calendrier « ${file.name} » importé (${r.characters} caractères).`);
       if (onSaved) onSaved();
-    } catch (e) {
-      notify(e.message);
+    } catch (err) {
+      notify(err.message);
     } finally {
       setBusy(false);
     }
@@ -209,32 +199,25 @@ export function ReferenceCalendarForm({ configured, onSaved, notify }) {
   return (
     <div className="space-y-3">
       <p className="text-xs text-stone-600">
-        Statut : {configured ? <strong className="text-emerald-700">calendrier enregistré</strong> : <strong>aucun calendrier</strong>}.
+        Statut : {configured ? <strong className="text-emerald-700">calendrier enregistré</strong> : <strong>aucun calendrier</strong>}
+        {configured && sourceName && <span className="text-stone-500"> ({sourceName})</span>}.
         L'IA s'appuie dessus pour reprendre votre ton et votre ligne éditoriale.
       </p>
       <p className="text-[11px] text-stone-500">
-        Formats acceptés : .csv, .txt, .md. Pour un fichier Excel, Word ou PDF, exportez-le d'abord en CSV ou en texte,
-        ou collez son contenu ci-dessous.
+        Formats acceptés : .xlsx, .xls, .csv, .txt, .md (5 Mo maximum). Pour un Word ou un PDF,
+        exportez d'abord le document en texte.
       </p>
-      <input type="file" accept=".csv,.txt,.md" onChange={onFile} className="text-xs" />
-      <textarea
-        rows={10}
-        className={input}
-        value={content}
-        maxLength={MAX_CALENDAR}
-        onChange={(e) => setContent(e.target.value)}
-        placeholder="Collez ici votre calendrier éditorial de référence..."
-      />
-      <div className="flex justify-between items-center">
-        <span className="text-[10px] text-stone-500">{content.length} / {MAX_CALENDAR}</span>
-        <button
-          onClick={save}
-          disabled={busy || !content.trim()}
-          className="px-5 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow disabled:opacity-50"
-        >
-          {busy ? 'Enregistrement...' : 'Enregistrer le calendrier'}
-        </button>
-      </div>
+      <label className={`inline-flex items-center gap-2 bg-stone-900 hover:bg-stone-800 text-amber-200 text-xs font-bold px-5 py-2.5 rounded-xl cursor-pointer shadow ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+        <i className="fa-solid fa-file-arrow-up text-gold-400"></i>
+        <span>{busy ? 'Import en cours...' : configured ? 'Remplacer le calendrier' : 'Importer le calendrier'}</span>
+        <input
+          type="file"
+          accept=".xlsx,.xls,.csv,.txt,.md"
+          onChange={onFile}
+          disabled={busy}
+          className="hidden"
+        />
+      </label>
     </div>
   );
 }
