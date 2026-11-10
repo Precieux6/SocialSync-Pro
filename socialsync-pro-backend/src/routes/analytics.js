@@ -1,50 +1,26 @@
 // socialsync-pro-backend/src/routes/analytics.js
 import express from 'express';
-import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
 
-dotenv.config();
 const router = express.Router();
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
+// GET /api/analytics : statistiques de l'espace actif (comptes du propriétaire)
 router.get('/', async (req, res) => {
-  try {
-    // req.clientId contient l'ID du propriétaire de l'équipe (ou l'utilisateur lui-même s'il est owner)
-    const clientId = req.clientId;
+  const { data, error } = await req.db
+    .from('social_stats')
+    .select('platform, period_start, metrics, synced_at')
+    .eq('owner_id', req.ownerId)
+    .order('period_start', { ascending: false })
+    .limit(90);
 
-    let weeklyStats = [
-      { day: "Lundi", instagram: "0", facebook: "0", youtube: "0", tiktok: "0" },
-      { day: "Mardi", instagram: "0", facebook: "0", youtube: "0", tiktok: "0" },
-      { day: "Mercredi", instagram: "0", facebook: "0", youtube: "0", tiktok: "0" },
-      { day: "Jeudi", instagram: "0", facebook: "0", youtube: "0", tiktok: "0" },
-      { day: "Vendredi", instagram: "0", facebook: "0", youtube: "0", tiktok: "0" },
-      { day: "Samedi", instagram: "0", facebook: "0", youtube: "0", tiktok: "0" },
-      { day: "Dimanche", instagram: "0", facebook: "0", youtube: "0", tiktok: "0" }
-    ];
+  if (error) return res.status(500).json({ success: false, error: error.message });
 
-    if (clientId) {
-      const { data, error } = await supabase
-        .from('analytics')
-        .select('*')
-        .eq('client_id', clientId)
-        .single();
-
-      if (data && !error) {
-        weeklyStats = data.weekly_stats || weeklyStats;
-      }
-    }
-
-    res.json({
-      success: true,
-      totalReach: clientId ? "Données chargées pour l'espace actif" : "0 Vues",
-      weeklyStats,
-      aiRecommendations: [
-        { title: "Optimisation de contenu", desc: "Analysez les performances de vos créneaux de publication." }
-      ]
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+  res.json({
+    success: true,
+    ownerId: req.ownerId,
+    hasData: data.length > 0,
+    lastSync: data[0]?.synced_at ?? null,
+    stats: data,
+  });
 });
 
 export default router;
