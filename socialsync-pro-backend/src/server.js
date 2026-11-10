@@ -14,7 +14,7 @@ import mediaRoutes from './routes/media.js';
 import analyticsRoutes from './routes/analytics.js';
 import profileRoutes from './routes/profile.js';
 
-import { requireAuth } from './middleware/auth.js'; // Import du middleware
+import { requireAuth } from './middleware/auth.js';
 
 dotenv.config();
 
@@ -33,8 +33,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Appliquer le middleware d'authentification sécurisé globalement sur les routes API
-// (Le profil gérera l'accès à l'utilisateur connecté, les autres modules cibleront req.clientId)
+// Appliquer le middleware d'authentification sécurisé sur l'ensemble des routes /api
 app.use('/api', requireAuth);
 
 // Limitation de débit globale et spécifique IA
@@ -56,7 +55,7 @@ app.use('/api/ai/', aiLimiter);
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
-    service: 'SocialSync Pro Backend API (Supabase + Claude Anthropic + RBAC Sécurisé)',
+    service: 'SocialSync Pro Backend API (Supabase + RBAC Sécurisé + team_member)',
     timestamp: new Date().toISOString()
   });
 });
@@ -71,5 +70,5 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/profile', profileRoutes);
 
 app.listen(PORT, () => {
-  console.log(`🚀 Serveur SocialSync Pro sécurisé (RBAC actif) en écoute sur le port ${PORT}`);
+  console.log(`🚀 Serveur SocialSync Pro en écoute sur le port ${PORT}`);
 });
