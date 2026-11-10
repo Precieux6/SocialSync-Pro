@@ -1,8 +1,8 @@
+// socialsync-pro-frontend/src/services/api.js
 import { supabase } from '../supabaseClient';
 
-// VITE_API_URL = racine du backend, sans /api ni slash final
+// VITE_API_URL = racine du backend, sans /api
 const API_URL = `${(import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/$/, '')}/api`;
-
 const STORAGE_KEY = 'socialsync.activeSpaceId';
 
 let activeSpaceId = localStorage.getItem(STORAGE_KEY);
@@ -15,12 +15,9 @@ export const setActiveSpaceId = (id) => {
   else localStorage.removeItem(STORAGE_KEY);
 };
 
-// Envoie le token et, si l'espace actif n'est pas le mien, l'en-tête X-Owner-Id.
-// { space: false } : n'envoie jamais d'espace (utile pour l'acceptation d'invitations).
 async function request(path, { method = 'GET', body, space = true } = {}) {
   const { data: { session } } = await supabase.auth.getSession();
   const headers = { 'Content-Type': 'application/json' };
-
   if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
 
   const ownerId = space ? activeSpaceId : null;
@@ -39,17 +36,32 @@ async function request(path, { method = 'GET', body, space = true } = {}) {
   return json;
 }
 
+// Envoie un fichier dans le stockage Supabase et renvoie son URL publique
+export async function uploadFile(bucket, path, file) {
+  const { error } = await supabase.storage
+    .from(bucket)
+    .upload(path, file, { upsert: true, contentType: file.type });
+  if (error) throw new Error(error.message);
+  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+  return data.publicUrl;
+}
+
 export const api = {
+  setup: {
+    status: () => request('/setup/status'),
+    getSocialAccounts: () => request('/setup/social-accounts'),
+    saveSocialAccounts: (accounts) =>
+      request('/setup/social-accounts', { method: 'PUT', body: accounts }),
+  },
+
   profile: {
     get: () => request('/profile'),
     update: (data) => request('/profile', { method: 'PUT', body: data }),
     changePassword: (currentPassword, newPassword) =>
       request('/profile/password', { method: 'PUT', body: { currentPassword, newPassword } }),
     saveClaudeKey: (apiKey) => request('/profile/claude-key', { method: 'PUT', body: { apiKey } }),
-    deleteClaudeKey: () => request('/profile/claude-key', { method: 'DELETE' }),
     saveReferenceCalendar: (content) =>
       request('/profile/reference-calendar', { method: 'PUT', body: { content } }),
-    deleteReferenceCalendar: () => request('/profile/reference-calendar', { method: 'DELETE' }),
   },
 
   team: {
@@ -66,7 +78,16 @@ export const api = {
 
   calendar: {
     themes: () => request('/calendar/themes'),
-    updateTheme: (week, title) => request(`/calendar/themes/${week}`, { method: 'PUT', body: { title } }),
+    updateTheme: (week, title) =>
+      request(`/calendar/themes/${week}`, { method: 'PUT', body: { title } }),
+    posts: (start, startWeek) =>
+      request(`/calendar/posts?start=${start}&startWeek=${startWeek}`),
+    createPost: (data) => request('/calendar/posts', { method: 'POST', body: data }),
+    updatePost: (id, data) => request(`/calendar/posts/${id}`, { method: 'PUT', body: data }),
+    schedule: (id, scheduled_at) =>
+      request(`/calendar/posts/${id}/schedule`, { method: 'POST', body: { scheduled_at } }),
+    publishNow: (id) => request(`/calendar/posts/${id}/publish-now`, { method: 'POST' }),
+    cancelSchedule: (id) => request(`/calendar/posts/${id}/cancel`, { method: 'POST' }),
   },
 
   videos: {
