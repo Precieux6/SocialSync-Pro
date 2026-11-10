@@ -1,27 +1,18 @@
+// socialsync-pro-backend/src/routes/videos.js
 import express from 'express';
-import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
 
-dotenv.config();
 const router = express.Router();
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
+// GET /api/videos/to-film : vidéos à tourner de l'espace actif
 router.get('/to-film', async (req, res) => {
-  try {
-    const clientId = req.clientId;
+  const { data, error } = await req.db
+    .from('videos_to_film')
+    .select('*')
+    .eq('owner_id', req.ownerId)
+    .order('release_date', { ascending: true });
 
-    const { data, error } = await supabase
-      .from('videos_to_film')
-      .select('*')
-      .eq('client_id', clientId);
-
-    if (error) throw error;
-
-    // Si le compte est nouveau et n'a pas de vidéos enregistrées, on renvoie un tableau vide
-    res.json({ success: true, count: data ? data.length : 0, videos: data || [] });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  res.json({ success: true, count: data.length, videos: data });
 });
 
 export default router;
