@@ -1,3 +1,4 @@
+// socialsync-pro-backend/src/routes/team.js
 import express from 'express';
 import { resend } from '../config/resend.js';
 import { createClient } from '@supabase/supabase-js';
@@ -9,7 +10,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
 
 const requireRole = (allowedRoles) => {
   return (req, res, next) => {
-    const userRole = req.headers['x-user-role'] || 'Propriétaire'; 
+    const userRole = req.userRole || 'Propriétaire'; 
     if (!allowedRoles.includes(userRole)) {
       return res.status(403).json({ 
         success: false, 
@@ -20,14 +21,14 @@ const requireRole = (allowedRoles) => {
   };
 };
 
-// GET /api/team - Récupérer l'équipe liée au compte / client actif
+// GET /api/team - Récupérer l'équipe liée au client actif (ou au propriétaire)
 router.get('/', async (req, res) => {
   try {
     const clientId = req.clientId;
     const { data, error } = await supabase
-      .from('team_members')
+      .from('team_member')
       .select('*')
-      .eq('client_id', clientId);
+      .or(`id.eq.${clientId},team_id.eq.${clientId}`);
 
     if (error) throw error;
 
@@ -37,7 +38,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /api/team/invite
+// POST /api/team/invite - Inviter un membre dans l'équipe
 router.post('/invite', requireRole(['Propriétaire', 'Community Manager']), async (req, res) => {
   try {
     const { email, role } = req.body;
@@ -51,7 +52,7 @@ router.post('/invite', requireRole(['Propriétaire', 'Community Manager']), asyn
     const assignedRole = validRoles.includes(role) ? role : 'Éditeur';
 
     const newMember = {
-      client_id: clientId,
+      team_id: clientId,
       name: email.split('@')[0],
       email,
       role: assignedRole,
@@ -60,7 +61,7 @@ router.post('/invite', requireRole(['Propriétaire', 'Community Manager']), asyn
     };
 
     const { data, error } = await supabase
-      .from('team_members')
+      .from('team_member')
       .insert([newMember])
       .select();
 
@@ -90,7 +91,7 @@ router.delete('/:id', requireRole(['Propriétaire']), async (req, res) => {
   try {
     const id = req.params.id;
     const { error } = await supabase
-      .from('team_members')
+      .from('team_member')
       .delete()
       .eq('id', id);
 
