@@ -1,106 +1,144 @@
-// socialsync-pro-backend/src/routes/team.js
 import express from 'express';
-import { resend } from '../config/resend.js';
-import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import { resend } from '../config/resend.js';
+import { requireOwner } from '../middleware/auth.js';
 
 dotenv.config();
 const router = express.Router();
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-const requireRole = (allowedRoles) => {
-  return (req, res, next) => {
-    const userRole = req.userRole || 'Propriétaire'; 
-    if (!allowedRoles.includes(userRole)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Accès refusé : permissions insuffisantes.' 
-      });
-    }
-    next();
-  };
-};
+const ROLES = ['Community Manager', 'Éditeur', 'Relecteur / Client'];
+const APP_URL = process.env.APP_URL || 'https://social-sync-pro.vercel.app';
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// GET /api/team - Récupérer l'équipe liée au client actif (ou au propriétaire)
-router.get('/', async (req, res) => {
+const emailConfigured = () =>
+  process.env.RESEND_API_KEY && process.env.RESEND_API_KEY !== 'votre_cle_resend';
+
+async function sendInvitationEmail(invitation, ownerName) {
+  if (!emailConfigured()) return { sent: false, reason: 'Envoi e-mail non configuré.' };
   try {
-    const clientId = req.clientId;
-    const { data, error } = await supabase
-      .from('team_member')
-      .select('*')
-      .or(`id.eq.${clientId},team_id.eq.${clientId}`);
-
-    if (error) throw error;
-
-    res.json({ success: true, count: data ? data.length : 0, team: data || [] });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// POST /api/team/invite - Inviter un membre dans l'équipe
-router.post('/invite', requireRole(['Propriétaire', 'Community Manager']), async (req, res) => {
-  try {
-    const { email, role } = req.body;
-    const clientId = req.clientId;
-
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ success: false, message: 'Adresse e-mail invalide.' });
-    }
-
-    const validRoles = ['Propriétaire', 'Community Manager', 'Éditeur', 'Relecteur / Client'];
-    const assignedRole = validRoles.includes(role) ? role : 'Éditeur';
-
-    const newMember = {
-      team_id: clientId,
-      name: email.split('@')[0],
-      email,
-      role: assignedRole,
-      status: 'Actif',
-      avatar: `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100`
-    };
-
-    const { data, error } = await supabase
-      .from('team_member')
-      .insert([newMember])
-      .select();
-
-    if (error) throw error;
-
-    if (process.env.RESEND_API_KEY && process.env.RESEND_API_KEY !== 'votre_cle_resend') {
-      await resend.emails.send({
-        from: 'SocialSync Pro <onboarding@resend.dev>',
-        to: email,
-        subject: 'Invitation à rejoindre le studio SocialSync Pro',
-        html: `<p>Bonjour,</p><p>Vous avez été invité en tant que <strong>${assignedRole}</strong>.</p>`
-      });
-    }
-
-    res.status(201).json({
-      success: true,
-      message: `Invitation envoyée à ${email} en tant que ${assignedRole}.`,
-      member: data[0]
+    await resend.emails.send({
+      from: 'SocialSync Pro <onboarding@resend.dev>',
+      to: invitation.email,
+      subject: `${ownerName} vous invite à rejoindre son studio SocialSync Pro`,
+      html: `<p>Bonjour,</p>
+             <p>${ownerName} vous invite en tant que <strong>${invitation.role}</strong>.</p>
+             <p>Créez votre compte ou connectez-vous avec cette adresse e-mail sur
+             <a href="${APP_URL}">${APP_URL}</a> : l'invitation sera acceptée automatiquement.</p>`,
     });
+    return { sent: true };
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Resend:', err);
+    return { sent: false, reason: "L'e-mail n'a pas pu être envoyé. Vous pouvez réessayer." };
   }
+}
+
+// Liste des membres actifs de mon espace
+router.get('/members', requireOwner, async (req, res) => {
+  const { data: links, error: e1 } = await req.db
+    .from('memberships')
+    .select('user_id, role, created_at')
+    .eq('owner_id', req.ownerId)
+    .eq('status', 'active');
+  if (e1) return res.status(500).json({ success: false, error: e1.message });
+
+  const ids = links.map((l) => l.user_id);
+  const { data: profiles, error: e2 } = ids.length
+    ? await req.db.from('team_member').select('id, name, email, avatar').in('id', ids)
+    : { data: [], error: null };
+  if (e2) return res.status(500).json({ success: false, error: e2.message });
+
+  const byId = Object.fromEntries(profiles.map((p) => [p.id, p]));
+  res.json({
+    success: true,
+    members: links.map((l) => ({ ...byId[l.user_id], user_id: l.user_id, role: l.role, since: l.created_at })),
+  });
 });
 
-// DELETE /api/team/:id
-router.delete('/:id', requireRole(['Propriétaire']), async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { error } = await supabase
-      .from('team_member')
-      .delete()
-      .eq('id', id);
+// Invitations en attente et acceptées
+router.get('/invitations', requireOwner, async (req, res) => {
+  const { data, error } = await req.db
+    .from('invitations')
+    .select('id, email, role, created_at, accepted_at')
+    .eq('owner_id', req.ownerId)
+    .order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  res.json({ success: true, invitations: data });
+});
 
-    if (error) throw error;
+// Nouvelle invitation (envoi immédiat)
+router.post('/invite', requireOwner, async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const role = req.body.role;
 
-    res.json({ success: true, message: `Membre retiré de l'équipe avec succès.` });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ success: false, error: 'Adresse e-mail invalide.' });
+  if (!ROLES.includes(role)) return res.status(400).json({ success: false, error: 'Rôle invalide.' });
+  if (email === String(req.user.email || '').toLowerCase()) {
+    return res.status(400).json({ success: false, error: 'Vous ne pouvez pas vous inviter vous-même.' });
   }
+
+  const { data, error } = await req.db
+    .from('invitations')
+    .insert([{ owner_id: req.ownerId, email, role }])
+    .select()
+    .single();
+  if (error) return res.status(500).json({ success: false, error: error.message });
+
+  const mail = await sendInvitationEmail(data, req.user.user_metadata?.full_name || req.user.email);
+  res.status(201).json({ success: true, invitation: data, email: mail });
+});
+
+// Renvoyer une invitation existante (même ligne)
+router.post('/invitations/:id/resend', requireOwner, async (req, res) => {
+  const { data, error } = await req.db
+    .from('invitations')
+    .select('*')
+    .eq('id', req.params.id)
+    .eq('owner_id', req.ownerId)
+    .is('accepted_at', null)
+    .maybeSingle();
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  if (!data) return res.status(404).json({ success: false, error: 'Invitation introuvable ou déjà acceptée.' });
+
+  const mail = await sendInvitationEmail(data, req.user.user_metadata?.full_name || req.user.email);
+  res.json({ success: true, email: mail });
+});
+
+// Supprimer une invitation non acceptée
+router.delete('/invitations/:id', requireOwner, async (req, res) => {
+  const { error } = await req.db
+    .from('invitations')
+    .delete()
+    .eq('id', req.params.id)
+    .eq('owner_id', req.ownerId)
+    .is('accepted_at', null);
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  res.json({ success: true });
+});
+
+// Changer le rôle d'un membre
+router.post('/members/:userId/role', requireOwner, async (req, res) => {
+  const { error } = await req.db.rpc('owner_set_member_role', {
+    p_user: req.params.userId,
+    p_role: req.body.role,
+  });
+  if (error) return res.status(400).json({ success: false, error: error.message });
+  res.json({ success: true });
+});
+
+// Retirer un membre (statut « removed », le compte est conservé)
+router.delete('/members/:userId', requireOwner, async (req, res) => {
+  const { error } = await req.db.rpc('owner_remove_member', { p_user: req.params.userId });
+  if (error) return res.status(400).json({ success: false, error: error.message });
+  res.json({ success: true });
+});
+
+// Acceptation des invitations par le membre connecté.
+// Ne passe pas par requireOwner : tout utilisateur authentifié peut accepter.
+// Doit être appelée SANS en-tête X-Owner-Id (l'espace par défaut est le sien).
+router.post('/accept', async (req, res) => {
+  const { data, error } = await req.db.rpc('accept_my_invitation');
+  if (error) return res.status(400).json({ success: false, error: error.message });
+  res.json({ success: true, accepted: data });
 });
 
 export default router;
