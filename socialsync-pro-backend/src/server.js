@@ -21,9 +21,21 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Origines autorisées : CLIENT_URL (une ou plusieurs, séparées par des virgules) + localhost hors production
+const allowedOrigins = [
+  ...(process.env.CLIENT_URL || '').split(',').map((s) => s.trim()).filter(Boolean),
+  ...(process.env.NODE_ENV !== 'production'
+    ? ['http://localhost:3000', 'http://localhost:5173']
+    : []),
+];
+
 app.use(helmet());
 app.use(cors({
-  origin: ['https://social-sync-pro.vercel.app', 'http://localhost:3000', 'http://localhost:5173'],
+  origin: (origin, callback) => {
+    // Requêtes sans origine (curl, outils serveur) : autorisées, elles ne viennent pas d'un navigateur
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('Origine non autorisée par CORS'));
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Owner-Id'],
   credentials: true,
@@ -66,6 +78,10 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
   console.error('Erreur serveur :', err);
+  // Erreur CORS : refus explicite plutôt qu'une erreur 500
+  if (err.message === 'Origine non autorisée par CORS') {
+    return res.status(403).json({ success: false, error: 'Origine non autorisée.' });
+  }
   res.status(500).json({ success: false, error: 'Erreur interne.' });
 });
 
