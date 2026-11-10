@@ -1,3 +1,4 @@
+// socialsync-pro-backend/src/routes/profile.js
 import express from 'express';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
@@ -22,9 +23,33 @@ function encrypt(text) {
   return iv.toString('hex') + ':' + encrypted.toString('hex');
 }
 
-// PUT /api/profile/update
+// GET /api/profile - Récupérer le profil propre à l'utilisateur connecté
+router.get('/', async (req, res) => {
+  try {
+    const userId = req.userId;
+    const userEmail = req.user?.email;
+
+    let query = supabase.from('team_member').select('*');
+    if (userId) {
+      query = query.eq('id', userId);
+    } else if (userEmail) {
+      query = query.eq('email', userEmail);
+    }
+
+    const { data, error } = await query.maybeSingle();
+
+    if (error) throw error;
+
+    res.json({ success: true, profile: data || {} });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT /api/profile/update - Mettre à jour son propre profil
 router.put('/update', async (req, res) => {
-  const { userId, apiKey, editorialSummary, fullName, roleTitle, bio } = req.body;
+  const { apiKey, editorialSummary, fullName, roleTitle, bio } = req.body;
+  const userId = req.userId;
 
   if (!userId) {
     return res.status(400).json({ success: false, error: "ID utilisateur manquant." });
@@ -33,11 +58,10 @@ router.put('/update', async (req, res) => {
   try {
     const updateData = {};
     
-    if (fullName) updateData.full_name = fullName;
-    if (roleTitle) updateData.role_title = roleTitle;
+    if (fullName) updateData.name = fullName;
+    if (roleTitle) updateData.role = roleTitle;
     if (bio) updateData.bio = bio;
     
-    // Chiffrement de la clé API Claude si elle est fournie
     if (apiKey && apiKey.trim() !== '') {
       updateData.personal_api_key_encrypted = encrypt(apiKey.trim());
     }
@@ -47,7 +71,7 @@ router.put('/update', async (req, res) => {
     }
 
     const { data, error } = await supabase
-      .from('team_members')
+      .from('team_member')
       .update(updateData)
       .eq('id', userId)
       .select();
