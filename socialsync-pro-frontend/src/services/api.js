@@ -1,74 +1,95 @@
 import { supabase } from '../supabaseClient';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+// VITE_API_URL = racine du backend, sans /api ni slash final
+const API_URL = `${(import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/$/, '')}/api`;
 
-// Utilitaire pour récupérer les en-têtes avec le token d'authentification Supabase
-async function getAuthHeaders() {
+const STORAGE_KEY = 'socialsync.activeSpaceId';
+
+let activeSpaceId = localStorage.getItem(STORAGE_KEY);
+
+export const getActiveSpaceId = () => activeSpaceId;
+
+export const setActiveSpaceId = (id) => {
+  activeSpaceId = id || null;
+  if (id) localStorage.setItem(STORAGE_KEY, id);
+  else localStorage.removeItem(STORAGE_KEY);
+};
+
+// Envoie le token et, si l'espace actif n'est pas le mien, l'en-tête X-Owner-Id.
+// { space: false } : n'envoie jamais d'espace (utile pour l'acceptation d'invitations).
+async function request(path, { method = 'GET', body, space = true } = {}) {
   const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token;
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-  };
+  const headers = { 'Content-Type': 'application/json' };
+
+  if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+
+  const ownerId = space ? activeSpaceId : null;
+  if (ownerId && ownerId !== session?.user?.id) headers['X-Owner-Id'] = ownerId;
+
+  const res = await fetch(`${API_URL}${path}`, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+
+  const json = await res.json().catch(() => ({ success: false, error: 'Réponse invalide du serveur.' }));
+  if (!res.ok || json.success === false) {
+    throw new Error(json.error || json.message || `Erreur ${res.status}`);
+  }
+  return json;
 }
 
-// 1. Récupérer les thèmes depuis le Backend (Supabase)
-export const fetchThemes = async (userId) => {
-  try {
-    const headers = await getAuthHeaders();
-    const url = userId ? `${API_URL}/calendar/themes?userId=${userId}` : `${API_URL}/calendar/themes`;
-    const res = await fetch(url, { headers });
-    return await res.json();
-  } catch (err) {
-    console.error("Erreur fetchThemes:", err);
-    return { success: false, themes: [] };
-  }
-};
+export const api = {
+  profile: {
+    get: () => request('/profile'),
+    update: (data) => request('/profile', { method: 'PUT', body: data }),
+    changePassword: (currentPassword, newPassword) =>
+      request('/profile/password', { method: 'PUT', body: { currentPassword, newPassword } }),
+    saveClaudeKey: (apiKey) => request('/profile/claude-key', { method: 'PUT', body: { apiKey } }),
+    deleteClaudeKey: () => request('/profile/claude-key', { method: 'DELETE' }),
+    saveReferenceCalendar: (content) =>
+      request('/profile/reference-calendar', { method: 'PUT', body: { content } }),
+    deleteReferenceCalendar: () => request('/profile/reference-calendar', { method: 'DELETE' }),
+  },
 
-// 2. Mettre à jour un thème
-export const updateTheme = async (weekNum, title) => {
-  try {
-    const headers = await getAuthHeaders();
-    const res = await fetch(`${API_URL}/calendar/themes/${weekNum}`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify({ title })
-    });
-    return await res.json();
-  } catch (err) {
-    console.error("Erreur updateTheme:", err);
-    return { success: false, error: err.message };
-  }
-};
+  team: {
+    members: () => request('/team/members'),
+    invitations: () => request('/team/invitations'),
+    invite: (email, role) => request('/team/invite', { method: 'POST', body: { email, role } }),
+    resendInvitation: (id) => request(`/team/invitations/${id}/resend`, { method: 'POST' }),
+    deleteInvitation: (id) => request(`/team/invitations/${id}`, { method: 'DELETE' }),
+    setMemberRole: (userId, role) =>
+      request(`/team/members/${userId}/role`, { method: 'POST', body: { role } }),
+    removeMember: (userId) => request(`/team/members/${userId}`, { method: 'DELETE' }),
+    acceptInvitations: () => request('/team/accept', { method: 'POST', space: false }),
+  },
 
-// 3. Demander une génération de légende au serveur backend sécurisé (Claude)
-export const generateCaptionWithClaude = async (title, theme, platform, userId) => {
-  try {
-    const headers = await getAuthHeaders();
-    const res = await fetch(`${API_URL}/ai/generate-caption`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ title, theme, platform, userId })
-    });
-    return await res.json();
-  } catch (err) {
-    console.error("Erreur de communication avec le backend :", err);
-    return { success: false, error: err.message };
-  }
-};
+  calendar: {
+    themes: () => request('/calendar/themes'),
+    updateTheme: (week, title) => request(`/calendar/themes/${week}`, { method: 'PUT', body: { title } }),
+  },
 
-// 4. Inviter un membre d'équipe (Resend)
-export const inviteTeamMember = async (email, role) => {
-  try {
-    const headers = await getAuthHeaders();
-    const res = await fetch(`${API_URL}/team/invite`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ email, role })
-    });
-    return await res.json();
-  } catch (err) {
-    console.error("Erreur inviteTeamMember:", err);
-    return { success: false, error: err.message };
-  }
+  videos: {
+    toFilm: () => request('/videos/to-film'),
+  },
+
+  media: {
+    list: () => request('/media'),
+    register: (file) => request('/media/upload', { method: 'POST', body: file }),
+  },
+
+  comments: {
+    list: () => request('/comments'),
+  },
+
+  analytics: {
+    get: () => request('/analytics'),
+  },
+
+  ai: {
+    caption: (title, theme, platform) =>
+      request('/ai/generate-caption', { method: 'POST', body: { title, theme, platform } }),
+    prompt: (theme, platform) =>
+      request('/ai/generate-prompt', { method: 'POST', body: { theme, platform } }),
+  },
 };
