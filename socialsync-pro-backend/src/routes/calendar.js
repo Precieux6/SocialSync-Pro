@@ -1,10 +1,16 @@
 // socialsync-pro-backend/src/routes/calendar.js
 import express from 'express';
+import { requireOwner } from '../middleware/auth.js';
 
 const router = express.Router();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TAG_RE = /^[@#]?[\p{L}\p{N}_.\-]{1,50}$/u;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const LOCAL_DT_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
+const DEFAULT_TZ = 'Europe/Paris';
+
+const FORMATS = ['Photo', 'Carrousel', 'Vidéo courte', 'Séance YouTube', 'Story', 'Question', 'Live'];
 
 // Gabarit hebdomadaire : index 0 = lundi
 const DAY_TEMPLATE = [
@@ -17,30 +23,91 @@ const DAY_TEMPLATE = [
   ['Vidéo courte'],
 ];
 
+// ---------- Dates ----------
+
 const isoOf = (d) => d.toISOString().slice(0, 10);
+
 const addDays = (iso, n) => {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
   return isoOf(d);
 };
 
+const isValidDate = (iso) =>
+  DATE_RE.test(iso) && !Number.isNaN(new Date(`${iso}T00:00:00Z`).getTime());
+
+const dayIndexOf = (iso) => (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7;
+
 // Valide ?start=YYYY-MM-DD (un lundi) et ?startWeek=1..13
 function parseBlock(req) {
   const start = String(req.query.start || '');
   const startWeek = parseInt(req.query.startWeek ?? '1', 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || Number.isNaN(new Date(`${start}T00:00:00Z`).getTime())) {
-    return { error: 'Date de début invalide (YYYY-MM-DD).' };
-  }
-  if (new Date(`${start}T00:00:00Z`).getUTCDay() !== 1) {
-    return { error: 'La période doit commencer un lundi.' };
-  }
+  if (!isValidDate(start)) return { error: 'Date de début invalide (YYYY-MM-DD).' };
+  if (dayIndexOf(start) !== 0) return { error: 'La période doit commencer un lundi.' };
   if (!Number.isInteger(startWeek) || startWeek < 1 || startWeek > 13) {
     return { error: 'Semaine de départ invalide (1 à 13).' };
   }
   return { start, startWeek };
 }
 
-// Thèmes de l'espace, indexés par numéro de semaine
+// ---------- Fuseaux horaires ----------
+
+export function isValidTimezone(tz) {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Décalage (ms) du fuseau à un instant donné
+function tzOffsetMs(utcMs, tz) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date(utcMs));
+  const v = (type) => Number(parts.find((p) => p.type === type).value);
+  const asUtc = Date.UTC(v('year'), v('month') - 1, v('day'), v('hour'), v('minute'), v('second'));
+  return asUtc - Math.floor(utcMs / 1000) * 1000;
+}
+
+// Convertit « AAAA-MM-JJTHH:mm » saisi dans le fuseau donné en instant UTC
+function zonedToUtc(localStr, tz) {
+  const m = LOCAL_DT_RE.exec(String(localStr || ''));
+  if (!m) return null;
+  const [y, mo, d, h, mi] = m.slice(1).map(Number);
+
+  // Rejette les dates impossibles (ex. 31 février)
+  const check = new Date(Date.UTC(y, mo - 1, d, h, mi));
+  if (check.getUTCFullYear() !== y || check.getUTCMonth() + 1 !== mo || check.getUTCDate() !== d) {
+    return null;
+  }
+
+  const guess = Date.UTC(y, mo - 1, d, h, mi);
+  let utc = guess - tzOffsetMs(guess, tz);
+  utc = guess - tzOffsetMs(utc, tz); // second passage : corrige les changements d'heure
+  return new Date(utc);
+}
+
+// Fuseau du propriétaire : c'est lui qui fixe le planning de l'espace
+async function spaceTimezone(req) {
+  const { data } = await req.db
+    .from('team_member')
+    .select('timezone')
+    .eq('id', req.ownerId)
+    .maybeSingle();
+  return data?.timezone && isValidTimezone(data.timezone) ? data.timezone : DEFAULT_TZ;
+}
+
+// ---------- Données ----------
+
 async function loadThemes(req) {
   const { data, error } = await req.db
     .from('weeks_themes')
@@ -50,27 +117,44 @@ async function loadThemes(req) {
   return Object.fromEntries((data || []).map((t) => [t.week, t.title]));
 }
 
-// Crée les publications de la période qui n'existent pas encore
+// Crée les publications du gabarit manquantes pour la période (sans toucher aux existantes)
 async function ensureBlock(req, start, startWeek) {
+  const end = addDays(start, 27);
+  const { data: existing, error: eErr } = await req.db
+    .from('editorial_posts')
+    .select('post_date, format, platform')
+    .eq('owner_id', req.ownerId)
+    .eq('is_adhoc', false)
+    .gte('post_date', start)
+    .lte('post_date', end);
+  if (eErr) throw new Error(eErr.message);
+
+  const have = new Set((existing || []).map((p) => `${p.post_date}|${p.format}|${p.platform}`));
   const rows = [];
+
   for (let i = 0; i < 4; i++) {
     const weekNum = ((startWeek - 1 + i) % 13) + 1;
     for (let d = 0; d < 7; d++) {
+      const post_date = addDays(start, i * 7 + d);
       for (const format of DAY_TEMPLATE[d]) {
+        if (have.has(`${post_date}|${format}|instagram`)) continue;
         rows.push({
           owner_id: req.ownerId,
-          post_date: addDays(start, i * 7 + d),
+          user_id: req.user.id,
+          post_date,
           week_num: weekNum,
           day_index: d,
           format,
           platform: 'instagram',
+          status: 'brouillon',
+          is_adhoc: false,
         });
       }
     }
   }
-  const { error } = await req.db
-    .from('editorial_posts')
-    .upsert(rows, { onConflict: 'owner_id,post_date,format,platform', ignoreDuplicates: true });
+
+  if (rows.length === 0) return;
+  const { error } = await req.db.from('editorial_posts').insert(rows);
   if (error) throw new Error(error.message);
 }
 
@@ -97,17 +181,14 @@ router.get('/themes', async (req, res) => {
       .order('week', { ascending: true });
     if (error) return res.status(500).json({ success: false, error: error.message });
 
-    if (!data || data.length === 0) {
-      return res.json({ success: true, themes: [], isDefault: true });
-    }
-    res.json({ success: true, themes: data, isDefault: false });
+    res.json({ success: true, themes: data || [], isDefault: !data || data.length === 0 });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// PUT /api/calendar/themes/:weekNum
-router.put('/themes/:weekNum', async (req, res) => {
+// PUT /api/calendar/themes/:weekNum : propriétaire seulement
+router.put('/themes/:weekNum', requireOwner, async (req, res) => {
   const weekNum = parseInt(req.params.weekNum, 10);
   const title = String(req.body?.title || '').trim().slice(0, 200);
 
@@ -131,7 +212,7 @@ router.put('/themes/:weekNum', async (req, res) => {
 
     const { data: created, error: cErr } = await req.db
       .from('weeks_themes')
-      .insert([{ week: weekNum, title, owner_id: req.ownerId, user_id: req.ownerId }])
+      .insert([{ week: weekNum, title, owner_id: req.ownerId, user_id: req.user.id }])
       .select()
       .single();
     if (cErr) return res.status(500).json({ success: false, error: cErr.message });
@@ -162,15 +243,51 @@ router.get('/posts', async (req, res) => {
       .order('format', { ascending: true });
     if (error) return res.status(500).json({ success: false, error: error.message });
 
-    const themes = await loadThemes(req);
+    const [themes, timezone] = await Promise.all([loadThemes(req), spaceTimezone(req)]);
     res.json({
       success: true,
       start: block.start,
       end,
       startWeek: block.startWeek,
       themes,
+      timezone,
       posts: data,
     });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/calendar/posts : publication hors calendrier éditorial
+router.post('/posts', async (req, res) => {
+  const postDate = String(req.body?.post_date || '');
+  const format = String(req.body?.format || '');
+  const weekNum = parseInt(req.body?.week_num, 10);
+
+  if (!isValidDate(postDate)) return res.status(400).json({ success: false, error: 'Date invalide.' });
+  if (!FORMATS.includes(format)) return res.status(400).json({ success: false, error: 'Format invalide.' });
+  if (!Number.isInteger(weekNum) || weekNum < 1 || weekNum > 13) {
+    return res.status(400).json({ success: false, error: 'Semaine invalide.' });
+  }
+
+  try {
+    const { data, error } = await req.db
+      .from('editorial_posts')
+      .insert([{
+        owner_id: req.ownerId,
+        user_id: req.user.id,
+        post_date: postDate,
+        week_num: weekNum,
+        day_index: dayIndexOf(postDate),
+        format,
+        platform: 'instagram',
+        status: 'brouillon',
+        is_adhoc: true,
+      }])
+      .select()
+      .single();
+    if (error) return res.status(500).json({ success: false, error: error.message });
+    res.status(201).json({ success: true, post: data });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -221,21 +338,57 @@ router.put('/posts/:id', async (req, res) => {
   }
 });
 
-// POST /api/calendar/posts/:id/schedule  { scheduled_at }
-router.post('/posts/:id/schedule', async (req, res) => {
+// DELETE /api/calendar/posts/:id : supprime uniquement une publication hors plan
+router.delete('/posts/:id', async (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
-
-  const when = new Date(req.body?.scheduled_at);
-  if (Number.isNaN(when.getTime())) return res.status(400).json({ success: false, error: 'Date de programmation invalide.' });
-  if (when.getTime() < Date.now() + 60_000) {
-    return res.status(400).json({ success: false, error: 'La date doit être dans le futur (au moins 1 minute).' });
-  }
 
   try {
     const post = await loadPost(req, req.params.id);
     if (!post) return res.status(404).json({ success: false, error: 'Publication introuvable.' });
+    if (!post.is_adhoc) {
+      return res.status(409).json({ success: false, error: 'Seules les publications hors plan peuvent être supprimées.' });
+    }
+    if (post.status === 'publie') {
+      return res.status(409).json({ success: false, error: 'Une publication déjà publiée ne peut pas être supprimée.' });
+    }
+
+    const { error } = await req.db
+      .from('editorial_posts')
+      .delete()
+      .eq('id', req.params.id)
+      .eq('owner_id', req.ownerId);
+    if (error) return res.status(500).json({ success: false, error: error.message });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/calendar/posts/:id/schedule
+// Corps : { local_datetime: "AAAA-MM-JJTHH:mm" } interprété dans le fuseau du propriétaire,
+// ou { scheduled_at: ISO } si l'instant est déjà connu.
+router.post('/posts/:id/schedule', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
+
+  try {
+    let when = null;
+    if (typeof req.body?.local_datetime === 'string') {
+      when = zonedToUtc(req.body.local_datetime, await spaceTimezone(req));
+    } else if (typeof req.body?.scheduled_at === 'string') {
+      when = new Date(req.body.scheduled_at);
+    }
+
+    if (!when || Number.isNaN(when.getTime())) {
+      return res.status(400).json({ success: false, error: 'Date de programmation invalide.' });
+    }
+    if (when.getTime() < Date.now() + 60_000) {
+      return res.status(400).json({ success: false, error: 'La date doit être dans le futur (au moins 1 minute).' });
+    }
+
+    const post = await loadPost(req, req.params.id);
+    if (!post) return res.status(404).json({ success: false, error: 'Publication introuvable.' });
     if (post.status === 'publie') return res.status(409).json({ success: false, error: 'Déjà publiée.' });
-    if (!post.caption.trim()) {
+    if (!post.caption?.trim()) {
       return res.status(400).json({ success: false, error: 'Rédigez la légende avant de programmer.' });
     }
 
@@ -254,7 +407,7 @@ router.post('/posts/:id/schedule', async (req, res) => {
 });
 
 // POST /api/calendar/posts/:id/publish-now
-// Enregistre la publication pour envoi immédiat. L'envoi réel sera fait par le worker.
+// Enregistre une publication à envoyer immédiatement. L'envoi réel est fait par le worker.
 router.post('/posts/:id/publish-now', async (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
 
@@ -262,7 +415,7 @@ router.post('/posts/:id/publish-now', async (req, res) => {
     const post = await loadPost(req, req.params.id);
     if (!post) return res.status(404).json({ success: false, error: 'Publication introuvable.' });
     if (post.status === 'publie') return res.status(409).json({ success: false, error: 'Déjà publiée.' });
-    if (!post.caption.trim()) {
+    if (!post.caption?.trim()) {
       return res.status(400).json({ success: false, error: 'Rédigez la légende avant de publier.' });
     }
 
@@ -279,7 +432,7 @@ router.post('/posts/:id/publish-now', async (req, res) => {
     res.status(202).json({
       success: true,
       post: data,
-      message: "Publication enregistrée pour envoi immédiat. L'envoi vers le réseau n'est pas encore branché.",
+      message: "Publication enregistrée pour envoi immédiat. L'envoi vers le réseau sera effectué par le worker de publication.",
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
