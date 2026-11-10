@@ -1,53 +1,41 @@
+// socialsync-pro-backend/src/routes/media.js
 import express from 'express';
-import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
 
-dotenv.config();
 const router = express.Router();
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+const ALLOWED_TYPES = ['image', 'video'];
 
-// Route pour lister les médias de la bibliothèque du client actif
+// GET /api/media : médiathèque de l'espace actif
 router.get('/', async (req, res) => {
-  try {
-    const clientId = req.clientId;
+  const { data, error } = await req.db
+    .from('media_library')
+    .select('*')
+    .eq('owner_id', req.ownerId)
+    .order('created_at', { ascending: false });
 
-    const { data, error } = await supabase
-      .from('media_library')
-      .select('*')
-      .eq('client_id', clientId);
-
-    if (error) throw error;
-
-    res.json({
-      success: true,
-      media: data || []
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  res.json({ success: true, media: data });
 });
 
-// Route d'upload de média rattachée au client actif
+// POST /api/media/upload : enregistrement d'un média déjà envoyé sur le stockage
+// Le fichier lui-même ne transite pas par l'API (voir note ci-dessous).
 router.post('/upload', async (req, res) => {
-  try {
-    const clientId = req.clientId;
-    const fileData = { ...req.body, client_id: clientId };
+  const name = String(req.body?.name || '').trim().slice(0, 255);
+  const type = String(req.body?.type || '');
+  const url = String(req.body?.url || '');
+  const size = String(req.body?.size || '').slice(0, 30);
 
-    const { data, error } = await supabase
-      .from('media_library')
-      .insert([fileData])
-      .select();
+  if (!name) return res.status(400).json({ success: false, error: 'Nom de fichier requis.' });
+  if (!ALLOWED_TYPES.includes(type)) return res.status(400).json({ success: false, error: 'Type de média invalide.' });
+  if (!/^https:\/\//.test(url)) return res.status(400).json({ success: false, error: 'URL https requise.' });
 
-    if (error) throw error;
+  const { data, error } = await req.db
+    .from('media_library')
+    .insert([{ owner_id: req.ownerId, user_id: req.user.id, name, type, url, size }])
+    .select()
+    .single();
 
-    res.json({
-      success: true,
-      message: "Média téléversé avec succès sur le cloud Supabase.",
-      file: data[0]
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  res.status(201).json({ success: true, file: data });
 });
 
 export default router;
