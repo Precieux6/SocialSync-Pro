@@ -16,6 +16,12 @@ const API_URL = 'https://social-sync-pro-backend.vercel.app/api';
 export default function App() {
   const { session, loadingSession, userRole, clientId, handleLogout } = useAuth();
 
+  const currentUser = session?.user;
+  const userEmail = currentUser?.email || "";
+  const [profileName, setProfileName] = useState(
+    currentUser?.user_metadata?.full_name || (userEmail ? userEmail.split('@')[0] : "Utilisateur")
+  );
+
   // Initialisation à vide pour garantir l'isolation multi-utilisateurs (RLS)
   const [weeksThemes, setWeeksThemes] = useState([]);
   const [activeTab, setActiveTab] = useState('calendar');
