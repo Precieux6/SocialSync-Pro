@@ -4,53 +4,61 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const supabase = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || ''
-);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// 1. Vérifie le token de l'utilisateur.
+// 2. Détermine l'espace actif (en-tête X-Owner-Id, sinon son propre espace).
+// 3. Récupère son rôle dans cet espace via my_role_in (RLS s'applique).
+// Toutes les routes utilisent ensuite req.db, client lié au JWT de l'utilisateur.
 export const requireAuth = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, error: 'Accès non autorisé : Token manquant.' });
+    const header = req.headers.authorization || '';
+    if (!header.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'Token manquant.' });
     }
+    const token = header.slice(7).trim();
 
-    const token = authHeader.split(' ')[1];
-    
-    // Vérification du token auprès de Supabase Auth
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-    
+    // Client lié au JWT : auth.uid() et RLS fonctionnent dans toutes les requêtes
+    const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    });
+
+    const { data: { user }, error } = await db.auth.getUser(token);
     if (error || !user) {
       return res.status(401).json({ success: false, error: 'Token invalide ou expiré.' });
     }
 
-    req.user = user;
-    req.userId = user.id;
-
-    // Par défaut, l'utilisateur est son propre client (Propriétaire)
-    let clientId = user.id;
-    let userRole = 'Propriétaire';
-
-    // Vérification dans la table "team_member"
-    const { data: memberRecord } = await supabase
-      .from('team_member')
-      .select('team_id, role, email')
-      .eq('email', user.email)
-      .maybeSingle();
-
-    if (memberRecord) {
-      userRole = memberRecord.role || 'Éditeur';
-      if (memberRecord.team_id) {
-        clientId = memberRecord.team_id;
-      }
+    const spaceId = req.headers['x-owner-id'] || user.id;
+    if (!UUID_RE.test(spaceId)) {
+      return res.status(400).json({ success: false, error: 'Espace invalide.' });
     }
 
-    req.clientId = clientId;
-    req.userRole = userRole;
+    const { data: role, error: roleErr } = await db.rpc('my_role_in', { p_owner: spaceId });
+    if (roleErr) {
+      return res.status(500).json({ success: false, error: 'Vérification de l\'espace impossible.' });
+    }
+    if (!role) {
+      return res.status(403).json({ success: false, error: 'Accès à cet espace refusé.' });
+    }
 
+    req.user = user;
+    req.db = db;
+    req.ownerId = spaceId;
+    req.userRole = role;
     next();
   } catch (err) {
-    return res.status(500).json({ success: false, error: `Erreur d'authentification : ${err.message}` });
+    console.error('requireAuth:', err);
+    res.status(500).json({ success: false, error: 'Erreur d\'authentification.' });
   }
 };
+
+// Usage : router.post('/x', requireRole('Propriétaire'), handler)
+export const requireRole = (...allowed) => (req, res, next) => {
+  if (!allowed.includes(req.userRole)) {
+    return res.status(403).json({ success: false, error: 'Permissions insuffisantes.' });
+  }
+  next();
+};
+
+export const requireOwner = requireRole('Propriétaire');
