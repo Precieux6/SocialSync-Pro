@@ -1,35 +1,27 @@
+// socialsync-pro-backend/src/routes/comments.js
 import express from 'express';
-import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
 
-dotenv.config();
 const router = express.Router();
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
+// GET /api/comments : commentaires de l'espace actif
 router.get('/', async (req, res) => {
-  try {
-    const clientId = req.clientId;
+  const { data, error } = await req.db
+    .from('comments')
+    .select('*')
+    .eq('owner_id', req.ownerId)
+    .order('created_at', { ascending: false });
 
-    const { data, error } = await supabase
-      .from('comments')
-      .select('*')
-      .eq('client_id', clientId);
-
-    if (error) throw error;
-
-    res.json({ success: true, count: data ? data.length : 0, comments: data || [] });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  res.json({ success: true, count: data.length, comments: data });
 });
 
-router.post('/reply', async (req, res) => {
-  try {
-    // Logique d'enregistrement ou de réponse liée au client
-    res.json({ success: true, message: 'Réponse envoyée avec succès.' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+// POST /api/comments/:id/reply : publication de la réponse sur le réseau
+// Non branché : les API Meta / YouTube / TikTok ne sont pas encore intégrées.
+router.post('/:id/reply', (req, res) => {
+  res.status(501).json({
+    success: false,
+    error: "Publication de la réponse sur le réseau social non encore branchée.",
+  });
 });
 
 export default router;
