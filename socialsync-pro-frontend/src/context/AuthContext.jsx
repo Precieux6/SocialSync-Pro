@@ -1,3 +1,4 @@
+// socialsync-pro-frontend/src/context/AuthContext.jsx
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { api, getActiveSpaceId, setActiveSpaceId } from '../services/api';
@@ -9,9 +10,31 @@ export function AuthProvider({ children }) {
   const [loadingSession, setLoadingSession] = useState(true);
   const [spaces, setSpaces] = useState([]);
   const [activeSpace, setActiveSpace] = useState(null);
+  const [ownerProfile, setOwnerProfile] = useState(null);
+  const [myProfile, setMyProfile] = useState(null);
+
+  // Profil du propriétaire de l'espace actif (nom, photo, bio) : lu dans team_member
+  const loadOwnerProfile = useCallback(async (ownerId) => {
+    const { data } = await supabase
+      .from('team_member')
+      .select('id, name, email, avatar, bio')
+      .eq('id', ownerId)
+      .maybeSingle();
+    setOwnerProfile(data ?? null);
+  }, []);
+
+  // Mon propre profil (nom, photo, fuseau) : utilisé dans « Mon profil »
+  const loadMyProfile = useCallback(async (userId) => {
+    const { data } = await supabase
+      .from('team_member')
+      .select('id, name, email, avatar, bio, timezone')
+      .eq('id', userId)
+      .maybeSingle();
+    setMyProfile(data ?? null);
+  }, []);
 
   const loadSpaces = useCallback(async (user) => {
-    // Accepte les invitations en attente pour cet e-mail (sans espace : c'est mon propre espace)
+    // Accepte les invitations en attente pour cet e-mail
     await api.team.acceptInvitations().catch(() => {});
 
     // Lecture par RLS : seulement mes propres rattachements
@@ -42,7 +65,9 @@ export function AuthProvider({ children }) {
     setSpaces(list);
     setActiveSpace(chosen);
     setActiveSpaceId(chosen.ownerId);
-  }, []);
+
+    await Promise.all([loadOwnerProfile(chosen.ownerId), loadMyProfile(user.id)]);
+  }, [loadOwnerProfile, loadMyProfile]);
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -58,6 +83,8 @@ export function AuthProvider({ children }) {
       } else {
         setSpaces([]);
         setActiveSpace(null);
+        setOwnerProfile(null);
+        setMyProfile(null);
         setActiveSpaceId(null);
       }
     });
@@ -65,17 +92,33 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, [loadSpaces]);
 
-  const switchSpace = (ownerId) => {
+  const switchSpace = async (ownerId) => {
     const next = spaces.find((s) => s.ownerId === ownerId);
     if (!next) return;
     setActiveSpace(next);
     setActiveSpaceId(next.ownerId);
+    await loadOwnerProfile(next.ownerId);
   };
+
+  // Rechargement après modification du profil (nom, photo, bio, fuseau)
+  const refreshProfiles = useCallback(async () => {
+    if (!session?.user) return;
+    await Promise.all([
+      activeSpace ? loadOwnerProfile(activeSpace.ownerId) : Promise.resolve(),
+      loadMyProfile(session.user.id),
+    ]);
+  }, [session, activeSpace, loadOwnerProfile, loadMyProfile]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut().catch(() => {});
     setActiveSpaceId(null);
   };
+
+  const isOwner = activeSpace?.role === 'Propriétaire';
+  const isOwnSpace = Boolean(session && activeSpace && activeSpace.ownerId === session.user.id);
+
+  // Nom affiché : toujours celui du propriétaire de l'espace, avec repli sur l'e-mail
+  const ownerName = ownerProfile?.name || ownerProfile?.email || activeSpace?.ownerName || '';
 
   return (
     <AuthContext.Provider
@@ -86,7 +129,14 @@ export function AuthProvider({ children }) {
         spaces,
         activeSpace,
         userRole: activeSpace?.role ?? null,
-        isOwner: activeSpace?.role === 'Propriétaire',
+        isOwner,
+        isOwnSpace,
+        ownerProfile,
+        ownerName,
+        ownerAvatar: ownerProfile?.avatar || '',
+        ownerBio: ownerProfile?.bio || '',
+        myProfile,
+        refreshProfiles,
         switchSpace,
         handleLogout,
       }}
