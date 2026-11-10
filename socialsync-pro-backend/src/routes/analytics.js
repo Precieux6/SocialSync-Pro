@@ -1,3 +1,4 @@
+// socialsync-pro-backend/src/routes/analytics.js
 import express from 'express';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
@@ -6,13 +7,11 @@ dotenv.config();
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-// Route pour récupérer les statistiques hebdomadaires et globales de manière isolée
 router.get('/', async (req, res) => {
   try {
+    // req.clientId contient l'ID du propriétaire de l'équipe (ou l'utilisateur lui-même s'il est owner)
     const clientId = req.clientId;
 
-    // Si une table 'analytics' existe dans Supabase pour lier les stats par client, on les récupère.
-    // Sinon, on renvoie des données vides ou par défaut propres au client si aucun historique n'existe encore.
     let weeklyStats = [
       { day: "Lundi", instagram: "0", facebook: "0", youtube: "0", tiktok: "0" },
       { day: "Mardi", instagram: "0", facebook: "0", youtube: "0", tiktok: "0" },
@@ -37,10 +36,10 @@ router.get('/', async (req, res) => {
 
     res.json({
       success: true,
-      totalReach: clientId ? "0 Vues (Nouveau compte)" : "284 300 Vues",
+      totalReach: clientId ? "Données chargées pour l'espace actif" : "0 Vues",
       weeklyStats,
       aiRecommendations: [
-        { title: "Connecter vos comptes", desc: "Liez vos réseaux sociaux pour activer l'analyse prédictive." }
+        { title: "Optimisation de contenu", desc: "Analysez les performances de vos créneaux de publication." }
       ]
     });
   } catch (err) {
