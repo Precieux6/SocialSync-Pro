@@ -13,6 +13,7 @@ import aiRoutes from './routes/ai.js';
 import mediaRoutes from './routes/media.js';
 import analyticsRoutes from './routes/analytics.js';
 import profileRoutes from './routes/profile.js';
+import setupRoutes from './routes/setup.js';
 
 import { requireAuth } from './middleware/auth.js';
 
@@ -43,6 +44,7 @@ app.use(cors({
 
 app.use(express.json({ limit: '200kb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use('/api/setup', requireAuth, setupRoutes);
 
 app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000,
