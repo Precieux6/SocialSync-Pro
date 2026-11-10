@@ -71,6 +71,7 @@ export default function CalendarPage({ notify }) {
 
   const [themes, setThemes] = useState({});
   const [isDefault, setIsDefault] = useState(false);
+  const [timezone, setTimezone] = useState('Europe/Paris');
   const [posts, setPosts] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [editingWeek, setEditingWeek] = useState(null);
@@ -85,6 +86,7 @@ export default function CalendarPage({ notify }) {
       setPosts(r.posts || []);
       setThemes(r.themes || {});
       setIsDefault(Boolean(r.isDefault));
+      setTimezone(r.timezone || 'Europe/Paris');
     } catch (e) {
       notify(e.message);
     } finally {
@@ -117,6 +119,11 @@ export default function CalendarPage({ notify }) {
 
   const onPostUpdated = (updated) => {
     setPosts((list) => list.map((p) => (p.id === updated.id ? updated : p)));
+  };
+
+  const onPostDeleted = (id) => {
+    setPosts((list) => list.filter((p) => p.id !== id));
+    setSelectedId(null);
   };
 
   const onPostCreated = async (post) => {
@@ -249,7 +256,11 @@ export default function CalendarPage({ notify }) {
                     </span>
                     {post.scheduled_at && post.status === 'programme' && (
                       <span className="block text-[9px] text-stone-500 mt-1">
-                        {new Date(post.scheduled_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                        {new Date(post.scheduled_at).toLocaleString('fr-FR', {
+                          dateStyle: 'short',
+                          timeStyle: 'short',
+                          timeZone: timezone,
+                        })}
                       </span>
                     )}
                   </button>
@@ -265,7 +276,9 @@ export default function CalendarPage({ notify }) {
           key={selected.id}
           post={selected}
           themeTitle={selectedTheme}
+          ownerTimezone={timezone}
           onUpdated={onPostUpdated}
+          onDeleted={onPostDeleted}
           onClose={() => setSelectedId(null)}
           notify={notify}
         />
