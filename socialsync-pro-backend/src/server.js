@@ -21,54 +21,54 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Sécurité & Middlewares globaux
 app.use(helmet());
 app.use(cors({
   origin: ['https://social-sync-pro.vercel.app', 'http://localhost:3000', 'http://localhost:5173'],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id', 'x-client-id', 'x-user-role'],
-  credentials: true
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Owner-Id'],
+  credentials: true,
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '200kb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Appliquer le middleware d'authentification sécurisé sur l'ensemble des routes /api
-app.use('/api', requireAuth);
-
-// Limitation de débit globale et spécifique IA
-const limiter = rateLimit({
+app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-});
-app.use('/api/', limiter);
+}));
 
-const aiLimiter = rateLimit({
+app.use('/api/ai/', rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 20,
-  message: { success: false, error: "Trop de requêtes vers l'IA, veuillez réessayer plus tard." }
-});
-app.use('/api/ai/', aiLimiter);
+  message: { success: false, error: "Trop de requêtes vers l'IA, veuillez réessayer plus tard." },
+}));
 
+// Publique
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    service: 'SocialSync Pro Backend API (Supabase + RBAC Sécurisé + team_member)',
-    timestamp: new Date().toISOString()
-  });
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-app.use('/api/calendar', calendarRoutes);
-app.use('/api/videos', videosRoutes);
-app.use('/api/comments', commentsRoutes);
-app.use('/api/team', teamRoutes);
-app.use('/api/ai', aiRoutes);
-app.use('/api/media', mediaRoutes);
-app.use('/api/analytics', analyticsRoutes);
-app.use('/api/profile', profileRoutes);
+// Protégées : chaque route passe par requireAuth
+app.use('/api/calendar', requireAuth, calendarRoutes);
+app.use('/api/videos', requireAuth, videosRoutes);
+app.use('/api/comments', requireAuth, commentsRoutes);
+app.use('/api/media', requireAuth, mediaRoutes);
+app.use('/api/analytics', requireAuth, analyticsRoutes);
+app.use('/api/team', requireAuth, teamRoutes);
+app.use('/api/ai', requireAuth, aiRoutes);
+app.use('/api/profile', requireAuth, profileRoutes);
+
+app.use((req, res) => {
+  res.status(404).json({ success: false, error: 'Route introuvable.' });
+});
+
+app.use((err, req, res, next) => {
+  console.error('Erreur serveur :', err);
+  res.status(500).json({ success: false, error: 'Erreur interne.' });
+});
 
 app.listen(PORT, () => {
-  console.log(`🚀 Serveur SocialSync Pro en écoute sur le port ${PORT}`);
+  console.log(`Serveur SocialSync Pro en écoute sur le port ${PORT}`);
 });
