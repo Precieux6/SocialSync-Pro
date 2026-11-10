@@ -1,108 +1,94 @@
+// socialsync-pro-frontend/src/components/Sidebar.jsx
 import React from 'react';
-import { Calendar, Users, Settings, BarChart2, FolderArchive, Bell, LogOut } from 'lucide-react';
 
-export function Sidebar({ activeTab, setActiveTab, userRole, onLogout, setSelectedDay }) {
-  const handleLogoClick = () => {
-    setActiveTab('calendar');
-    if (setSelectedDay) setSelectedDay(null);
+const MAIN_ITEMS = [
+  { id: 'calendar', label: 'Calendrier éditorial', icon: 'fa-regular fa-calendar-days' },
+  { id: 'to_film', label: 'À tourner', icon: 'fa-solid fa-clapperboard' },
+  { id: 'comments', label: 'Mes commentaires', icon: 'fa-regular fa-comments' },
+  { id: 'media', label: 'Médiathèque', icon: 'fa-solid fa-photo-film' },
+  { id: 'analytics', label: 'Mes statistiques', icon: 'fa-solid fa-chart-line' },
+  { id: 'profile', label: 'Mon profil & paramètres', icon: 'fa-regular fa-user' },
+];
+
+// Réservé au propriétaire
+const ADMIN_ITEMS = [
+  { id: 'team', label: 'Équipes & accès', icon: 'fa-solid fa-users' },
+  { id: 'apis', label: 'APIs réseaux', icon: 'fa-solid fa-key' },
+];
+
+function NavItem({ item, active, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-bold transition-all ${
+        active ? 'bg-stone-900 text-amber-200 shadow-sm' : 'text-stone-700 hover:bg-[#E8DFC9]/60'
+      }`}
+    >
+      <i className={`${item.icon} text-sm w-4 text-center`}></i>
+      <span>{item.label}</span>
+    </button>
+  );
+}
+
+export default function Sidebar({
+  tab, onNavigate, isOwner, userName, roleLabel, spaceName, onLogout, open, onClose,
+}) {
+  const go = (id) => {
+    onNavigate(id);
+    if (onClose) onClose();
   };
 
   return (
-    <aside className="w-64 bg-white border-r border-[#E2D5C3] flex flex-col h-screen">
-      {/* Logo cliquable redirigeant vers le calendrier */}
-      <div 
-        onClick={handleLogoClick}
-        className="p-6 border-b border-[#E2D5C3] flex items-center space-x-3 cursor-pointer hover:bg-gray-50 transition-colors"
+    <>
+      {open && <div className="fixed inset-0 bg-stone-900/50 z-40 md:hidden" onClick={onClose} />}
+
+      <aside
+        className={`fixed md:static inset-y-0 left-0 z-50 w-72 bg-[#F4EFE6] border-r border-[#E2D5C3] p-6 flex flex-col justify-between transition-transform duration-300 ${
+          open ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        }`}
       >
-        <img 
-          src="/SOCIAL SYNC PRO LOGO.png" 
-          alt="Social Sync Pro" 
-          className="h-8 w-auto object-contain"
-        />
-        <div>
-          <h1 className="font-bold text-gray-900 text-sm leading-tight">Social Sync Pro</h1>
-          <span className="text-[10px] text-gray-500 uppercase tracking-wider">Espace de travail</span>
+        <div className="space-y-8">
+          <button onClick={() => go('calendar')} className="flex items-center gap-3 text-left">
+            <img src="/logo-social-sync-pro.png" alt="SocialSync Pro" className="w-10 h-10 rounded-xl object-contain" />
+            <div>
+              <h1 className="font-serif font-bold text-stone-900 text-sm tracking-wide">SOCIALSYNC PRO</h1>
+              <span className="text-[10px] uppercase font-bold tracking-widest text-gold-700">Studio Éditorial</span>
+            </div>
+          </button>
+
+          <div className="p-3.5 rounded-2xl border border-[#E2D5C3] bg-[#FAF7F2]">
+            <span className="text-[10px] uppercase font-bold tracking-wider block opacity-75">
+              Espace : {spaceName}
+            </span>
+            <h4 className="font-serif font-bold text-xs truncate">{userName}</h4>
+            <span className="text-[10px] text-stone-500">{roleLabel}</span>
+          </div>
+
+          <nav className="space-y-1.5">
+            {MAIN_ITEMS.map((item) => (
+              <NavItem key={item.id} item={item} active={tab === item.id} onClick={() => go(item.id)} />
+            ))}
+
+            {isOwner && (
+              <div className="pt-4 mt-4 border-t border-[#E2D5C3] space-y-1.5">
+                {ADMIN_ITEMS.map((item) => (
+                  <NavItem key={item.id} item={item} active={tab === item.id} onClick={() => go(item.id)} />
+                ))}
+              </div>
+            )}
+          </nav>
         </div>
-      </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        <button
-          onClick={() => { setActiveTab('calendar'); if (setSelectedDay) setSelectedDay(null); }}
-          className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === 'calendar' ? 'bg-[#1C2C35] text-white' : 'text-gray-600 hover:bg-gray-100'
-          }`}
-        >
-          <Calendar className="w-4 h-4" />
-          <span>Calendrier éditorial</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('media')}
-          className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === 'media' ? 'bg-[#1C2C35] text-white' : 'text-gray-600 hover:bg-gray-100'
-          }`}
-        >
-          <FolderArchive className="w-4 h-4" />
-          <span>Médiathèque</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('analytics')}
-          className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === 'analytics' ? 'bg-[#1C2C35] text-white' : 'text-gray-600 hover:bg-gray-100'
-          }`}
-        >
-          <BarChart2 className="w-4 h-4" />
-          <span>Statistiques</span>
-        </button>
-
-        {/* Réservé au Propriétaire */}
-        {userRole === 'Propriétaire' && (
-          <>
-            <button
-              onClick={() => setActiveTab('team')}
-              className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'team' ? 'bg-[#1C2C35] text-white' : 'text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              <span>Mon équipe & accès</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('notifications')}
-              className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'notifications' ? 'bg-[#1C2C35] text-white' : 'text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              <Bell className="w-4 h-4" />
-              <span>Notifications & Rappels</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('settings')}
-              className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'settings' ? 'bg-[#1C2C35] text-white' : 'text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              <Settings className="w-4 h-4" />
-              <span>APIs Réseaux & IA</span>
-            </button>
-          </>
-        )}
-      </nav>
-
-      {/* Footer / Déconnexion */}
-      <div className="p-4 border-t border-[#E2D5C3]">
-        <button
-          onClick={onLogout}
-          className="w-full flex items-center space-x-3 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-        >
-          <LogOut className="w-4 h-4" />
-          <span>Déconnexion</span>
-        </button>
-      </div>
-    </aside>
+        <div className="pt-6 border-t border-[#E2D5C3]">
+          <button
+            onClick={onLogout}
+            className="w-full bg-[#FAF7F2] hover:bg-[#E8DFC9] border border-[#E2D5C3] text-stone-800 text-xs font-bold py-3 px-4 rounded-2xl flex items-center justify-center gap-2 transition-all"
+          >
+            <i className="fa-solid fa-right-from-bracket text-stone-600"></i>
+            <span>Se déconnecter</span>
+          </button>
+        </div>
+      </aside>
+    </>
   );
 }
