@@ -1,4 +1,4 @@
-// socialsync-pro-frontend/src/components/Calendar/PostEditor.jsx
+// socialsync-pro-frontend/src/components/calendar/PostEditor.jsx
 import React, { useState } from 'react';
 import { api } from '../../services/api';
 
@@ -20,21 +20,40 @@ const toForm = (post) => ({
   first_comment: post.first_comment || '',
 });
 
-// Date/heure locale par défaut pour le champ datetime-local : maintenant + 1 h
-const defaultLocalDateTime = () => {
-  const d = new Date(Date.now() + 60 * 60 * 1000);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
+// Valeur « AAAA-MM-JJTHH:mm » d'un instant, exprimée dans le fuseau donné
+const toLocalInputValue = (date, tz) => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const v = (type) => parts.find((p) => p.type === type).value;
+  return `${v('year')}-${v('month')}-${v('day')}T${v('hour')}:${v('minute')}`;
 };
 
-export default function PostEditor({ post, themeTitle, onUpdated, onClose, notify }) {
+export default function PostEditor({
+  post,
+  themeTitle,
+  ownerTimezone,
+  onUpdated,
+  onDeleted,
+  onClose,
+  notify,
+}) {
   const [form, setForm] = useState(toForm(post));
   const [platform, setPlatform] = useState(post.platform || 'instagram');
   const [tagInput, setTagInput] = useState('');
-  const [scheduleAt, setScheduleAt] = useState(defaultLocalDateTime());
+  const [scheduleAt, setScheduleAt] = useState(() =>
+    toLocalInputValue(new Date(Date.now() + 60 * 60 * 1000), ownerTimezone || 'Europe/Paris')
+  );
   const [busy, setBusy] = useState(false);
 
   const readOnly = post.status === 'publie';
+  const canDelete = post.is_adhoc && !readOnly;
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -74,7 +93,7 @@ export default function PostEditor({ post, themeTitle, onUpdated, onClose, notif
     withBusy(async () => {
       const r = await api.ai.caption(form.brief.trim() || post.format, themeTitle, platform);
       set('caption', r.caption || '');
-      notify('Légende générée. Pensez à l\'enregistrer.');
+      notify("Légende générée. Pensez à l'enregistrer.");
     });
 
   const onGeneratePrompt = () =>
@@ -92,10 +111,11 @@ export default function PostEditor({ post, themeTitle, onUpdated, onClose, notif
     }
   };
 
+  // La valeur de scheduleAt est interprétée par le serveur dans le fuseau du propriétaire
   const onSchedule = () =>
     withBusy(async () => {
       await save();
-      const r = await api.calendar.schedule(post.id, new Date(scheduleAt).toISOString());
+      const r = await api.calendar.schedule(post.id, scheduleAt);
       onUpdated(r.post);
       notify('Publication programmée.');
     });
@@ -117,6 +137,15 @@ export default function PostEditor({ post, themeTitle, onUpdated, onClose, notif
       notify('Programmation annulée.');
     });
 
+  const onDelete = () => {
+    if (!window.confirm('Supprimer cette publication hors plan ? Cette action est définitive.')) return;
+    withBusy(async () => {
+      await api.calendar.deletePost(post.id);
+      notify('Publication supprimée.');
+      onDeleted(post.id);
+    });
+  };
+
   const inputClass =
     'w-full bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-3 text-xs text-stone-900 focus:outline-none focus:border-gold-500 leading-relaxed disabled:opacity-60';
 
@@ -124,7 +153,9 @@ export default function PostEditor({ post, themeTitle, onUpdated, onClose, notif
     <div className="bg-[#FAF7F2] border-2 border-gold-400 rounded-3xl p-6 space-y-6 shadow-sm">
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 border-b border-[#E2D5C3] pb-4">
         <div>
-          <span className="text-xs font-bold text-gold-700 uppercase tracking-widest">Publication</span>
+          <span className="text-xs font-bold text-gold-700 uppercase tracking-widest">
+            Publication{post.is_adhoc ? ' hors plan' : ''}
+          </span>
           <h3 className="font-serif font-bold text-xl text-stone-900">
             {post.format} · {post.post_date}
           </h3>
@@ -280,7 +311,10 @@ export default function PostEditor({ post, themeTitle, onUpdated, onClose, notif
       {!readOnly && (
         <section className="border-t border-[#E2D5C3] pt-4 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
           <div className="space-y-2">
-            <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">Date de programmation</label>
+            <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
+              Date de programmation
+              {ownerTimezone && <span className="normal-case font-normal text-stone-500"> (fuseau du propriétaire : {ownerTimezone})</span>}
+            </label>
             <input
               type="datetime-local"
               value={scheduleAt}
@@ -289,12 +323,21 @@ export default function PostEditor({ post, themeTitle, onUpdated, onClose, notif
             />
             {post.status === 'programme' && post.scheduled_at && (
               <p className="text-[11px] text-amber-800">
-                Programmé le {new Date(post.scheduled_at).toLocaleString('fr-FR')}
+                Programmé le {new Date(post.scheduled_at).toLocaleString('fr-FR', { timeZone: ownerTimezone || undefined })}
               </p>
             )}
           </div>
 
           <div className="flex flex-wrap gap-2 justify-end">
+            {canDelete && (
+              <button
+                onClick={onDelete}
+                disabled={busy}
+                className="px-5 py-2.5 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-bold hover:bg-red-100 disabled:opacity-50"
+              >
+                Supprimer
+              </button>
+            )}
             <button
               onClick={onSave}
               disabled={busy}
@@ -330,6 +373,12 @@ export default function PostEditor({ post, themeTitle, onUpdated, onClose, notif
             )}
           </div>
         </section>
+      )}
+
+      {readOnly && canDelete === false && post.is_adhoc && (
+        <p className="text-[11px] text-stone-500 border-t border-[#E2D5C3] pt-4">
+          Cette publication est déjà publiée : elle ne peut plus être modifiée ni supprimée.
+        </p>
       )}
     </div>
   );
