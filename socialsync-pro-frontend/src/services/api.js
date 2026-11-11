@@ -1,7 +1,6 @@
 // socialsync-pro-frontend/src/services/api.js
 import { supabase } from '../supabaseClient';
 
-// VITE_API_URL = racine du backend, sans /api
 const API_URL = `${(import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/$/, '')}/api`;
 const STORAGE_KEY = 'socialsync.activeSpaceId';
 
@@ -15,15 +14,12 @@ export const setActiveSpaceId = (id) => {
   else localStorage.removeItem(STORAGE_KEY);
 };
 
-// En-têtes communs : jeton de session + espace actif si ce n'est pas le mien
 async function authHeaders({ space = true } = {}) {
   const { data: { session } } = await supabase.auth.getSession();
   const headers = {};
   if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
-
   const ownerId = space ? activeSpaceId : null;
   if (ownerId && ownerId !== session?.user?.id) headers['X-Owner-Id'] = ownerId;
-
   return { headers, session };
 }
 
@@ -44,12 +40,10 @@ async function request(path, { method = 'GET', body, space = true } = {}) {
   return json;
 }
 
-// Envoi multipart (fichier) : ne pas fixer Content-Type, le navigateur ajoute la frontière
 async function upload(path, file) {
   const { headers } = await authHeaders();
   const form = new FormData();
   form.append('file', file);
-
   const res = await fetch(`${API_URL}${path}`, { method: 'POST', headers, body: form });
   const json = await res.json().catch(() => ({ success: false, error: 'Réponse invalide du serveur.' }));
   if (!res.ok || json.success === false) {
@@ -58,7 +52,6 @@ async function upload(path, file) {
   return json;
 }
 
-// Envoie un fichier dans le stockage Supabase et renvoie son URL publique
 export async function uploadFile(bucket, path, file) {
   const { error } = await supabase.storage
     .from(bucket)
@@ -89,6 +82,13 @@ export const api = {
     deleteReferenceCalendar: () => request('/profile/reference-calendar', { method: 'DELETE' }),
   },
 
+  account: {
+    status: () => request('/account/status', { space: false }),
+    deactivate: (confirm) => request('/account/deactivate', { method: 'POST', body: { confirm }, space: false }),
+    reactivate: () => request('/account/reactivate', { method: 'POST', space: false }),
+    deleteNow: (confirm) => request('/account', { method: 'DELETE', body: { confirm }, space: false }),
+  },
+
   team: {
     members: () => request('/team/members'),
     invitations: () => request('/team/invitations'),
@@ -109,7 +109,6 @@ export const api = {
       request(`/calendar/posts?start=${start}&startWeek=${startWeek}`),
     createPost: (data) => request('/calendar/posts', { method: 'POST', body: data }),
     updatePost: (id, data) => request(`/calendar/posts/${id}`, { method: 'PUT', body: data }),
-    // local_datetime : « AAAA-MM-JJTHH:mm », interprétée dans le fuseau du propriétaire côté serveur
     schedule: (id, local_datetime) =>
       request(`/calendar/posts/${id}/schedule`, { method: 'POST', body: { local_datetime } }),
     publishNow: (id) => request(`/calendar/posts/${id}/publish-now`, { method: 'POST' }),
