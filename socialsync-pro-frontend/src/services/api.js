@@ -28,7 +28,6 @@ async function authHeaders({ space = true } = {}) {
   return { headers, session };
 }
 
-// Exécute un fetch avec délai d'attente. Lève une erreur lisible si le délai est dépassé.
 async function fetchWithTimeout(url, options, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -65,23 +64,6 @@ async function request(path, { method = 'GET', body, space = true, timeoutMs } =
   return json;
 }
 
-async function upload(path, file, timeoutMs) {
-  const { headers } = await authHeaders();
-  const form = new FormData();
-  form.append('file', file);
-
-  const res = await fetchWithTimeout(
-    `${API_URL}${path}`,
-    { method: 'POST', headers, body: form },
-    timeoutMs
-  );
-  const json = await res.json().catch(() => ({ success: false, error: 'Réponse invalide du serveur.' }));
-  if (!res.ok || json.success === false) {
-    throw new Error(json.error || `Erreur ${res.status}`);
-  }
-  return json;
-}
-
 export async function uploadFile(bucket, path, file) {
   const { error } = await supabase.storage
     .from(bucket)
@@ -108,7 +90,22 @@ export const api = {
     deleteClaudeKey: () => request('/profile/claude-key', { method: 'DELETE' }),
     saveReferenceCalendar: (content) =>
       request('/profile/reference-calendar', { method: 'PUT', body: { content } }),
-    uploadReferenceCalendar: (file) => upload('/profile/reference-calendar/upload', file),
+    uploadReferenceCalendar: (file) => {
+      // Wrapper sécurisé pour l'upload multipart via fetch
+      return authHeaders().then(async ({ headers }) => {
+        const form = new FormData();
+        form.append('file', file);
+        delete headers['Content-Type']; // Laisser le navigateur gérer le boundary du FormData
+        const res = await fetchWithTimeout(`${API_URL}/profile/reference-calendar/upload`, {
+          method: 'POST',
+          headers,
+          body: form,
+        });
+        const json = await res.json().catch(() => ({ success: false, error: 'Réponse invalide du serveur.' }));
+        if (!res.ok || json.success === false) throw new Error(json.error || `Erreur ${res.status}`);
+        return json;
+      });
+    },
     deleteReferenceCalendar: () => request('/profile/reference-calendar', { method: 'DELETE' }),
   },
 
