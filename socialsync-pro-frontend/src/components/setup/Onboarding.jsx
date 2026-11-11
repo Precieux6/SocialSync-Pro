@@ -1,5 +1,5 @@
 // socialsync-pro-frontend/src/components/setup/Onboarding.jsx
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../../services/api';
 import { SocialAccountsForm, ClaudeKeyForm, ReferenceCalendarForm } from './SetupForms';
 
@@ -24,7 +24,6 @@ const STEPS = [
   },
 ];
 
-// Première étape obligatoire non terminée
 const firstOpen = (status) => {
   const i = STEPS.findIndex((s) => s.required && !status[s.key]);
   return i === -1 ? 0 : i;
@@ -33,54 +32,60 @@ const firstOpen = (status) => {
 export default function Onboarding({ onComplete, onLogout, notify }) {
   const [status, setStatus] = useState({ socialAccounts: false, claudeKey: false, referenceCalendar: false });
   
-  // Persistance de l'étape active dans le localStorage pour éviter de perdre le fil lors d'un rechargement
+  // Utilisation exclusive du localStorage pour verrouiller l'étape active sans écrasement distant intempestif
   const [step, setStep] = useState(() => {
-    const savedStep = localStorage.getItem('onboarding_current_step');
-    return savedStep !== null ? parseInt(savedStep, 10) : 0;
+    const saved = localStorage.getItem('onboarding_current_step');
+    return saved !== null ? parseInt(saved, 10) : 0;
   });
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
 
+  // Sauvegarde instantanée de l'étape active
   useEffect(() => {
     localStorage.setItem('onboarding_current_step', step);
   }, [step]);
 
-  const load = useCallback(async () => {
-    const r = await api.setup.status();
-    setStatus(r.status);
-    return r;
-  }, []);
-
-  const initialLoad = useCallback(() => {
-    setLoading(true);
-    setLoadError(null);
-    return load()
-      .then((r) => {
-        // Si l'étape enregistrée en cache est valide, on la garde, sinon on prend la première étape ouverte
-        const targetStep = localStorage.getItem('onboarding_current_step') !== null 
-          ? parseInt(localStorage.getItem('onboarding_current_step'), 10) 
-          : firstOpen(r.status);
-        setStep(targetStep);
-      })
-      .catch((e) => setLoadError(e.message))
-      .finally(() => setLoading(false));
-  }, [load]);
-
+  // Chargement initial unique au montage du composant (ne se relance plus jamais en arrière-plan)
   useEffect(() => {
-    initialLoad();
-  }, [initialLoad]);
+    let isMounted = true;
+    setLoading(true);
+
+    api.setup.status()
+      .then((r) => {
+        if (!isMounted) return;
+        setStatus(r.status);
+        // Si aucune étape n'est mémorisée, on positionne sur la première non validée
+        if (localStorage.getItem('onboarding_current_step') === null) {
+          setStep(firstOpen(r.status));
+        }
+      })
+      .catch((e) => {
+        if (isMounted) setLoadError(e.message);
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []); // Tableau de dépendances vide pour bloquer tout rechargement cyclique
 
   const onSaved = async () => {
     try {
-      const r = await load();
+      const r = await api.setup.status();
+      setStatus(r.status);
+
       if (r.complete) {
+        // Nettoyage complet des caches d'onboarding une fois terminé
         localStorage.removeItem('onboarding_current_step');
         localStorage.removeItem('social_accounts_draft');
         localStorage.removeItem('claude_key_draft');
         notify('Configuration terminée. Bienvenue dans SocialSync Pro !');
         onComplete();
       } else {
+        // Passage automatique à l'étape obligatoire suivante
         const nextStep = firstOpen(r.status);
         setStep(nextStep);
       }
@@ -89,7 +94,6 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
     }
   };
 
-  // Passe l'étape facultative sans l'enregistrer
   const skip = () => {
     const next = STEPS.findIndex((s, i) => i > step && s.required && !status[s.key]);
     setStep(next === -1 ? step + 1 : next);
@@ -98,7 +102,7 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
   if (loading) {
     return (
       <div className="min-h-screen bg-[#FAF7F2] flex items-center justify-center text-xs font-bold uppercase tracking-widest text-stone-500">
-        Chargement...
+        Chargement de votre espace...
       </div>
     );
   }
@@ -110,7 +114,7 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
           <p className="text-sm text-stone-800">{loadError}</p>
           <div className="flex items-center justify-center gap-3">
             <button
-              onClick={initialLoad}
+              onClick={() => window.location.reload()}
               className="px-5 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow"
             >
               Réessayer
@@ -140,7 +144,7 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
             <div>
               <h1 className="font-serif font-bold text-xl text-stone-900">Bienvenue sur SocialSync Pro</h1>
               <p className="text-xs text-stone-500">
-                Étapes obligatoires terminées : {requiredDone} / {requiredTotal}.
+                Étapes obligatoires terminées : {requiredDone} / {requiredTotal}. Prenez le temps de renseigner vos informations en toute tranquillité.
               </p>
             </div>
           </div>
