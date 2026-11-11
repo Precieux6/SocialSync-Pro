@@ -31,11 +31,7 @@ function isValidTimezone(tz) {
   }
 }
 
-const avatarPrefix = (userId) =>
-  `${SUPABASE_URL}/storage/v1/object/public/avatars/`;
-
-function isOwnAvatarUrl(url, userId) {
-  // Assouplissement pour accepter toute URL valide pointant vers le bucket avatars du projet
+function isOwnAvatarUrl(url) {
   return typeof url === 'string' && url.includes('/storage/v1/object/public/avatars/') && !url.includes('..') && url.length <= 500;
 }
 
@@ -178,14 +174,14 @@ router.get('/', async (req, res) => {
 
 router.put('/', async (req, res) => {
   const b = req.body || {};
-  const update = {};
+  const update = { id: req.user.id };
 
   if (typeof b.name === 'string') update.name = b.name.trim().slice(0, 120);
   if (typeof b.bio === 'string') update.bio = b.bio.trim().slice(0, 1000);
 
   if (typeof b.avatar === 'string') {
     const cleanAvatarUrl = b.avatar.split('?')[0];
-    if (b.avatar !== '' && !isOwnAvatarUrl(cleanAvatarUrl, req.user.id)) {
+    if (b.avatar !== '' && !isOwnAvatarUrl(cleanAvatarUrl)) {
       return res.status(400).json({ success: false, error: 'Avatar invalide : importez une image depuis votre profil.' });
     }
     update.avatar = b.avatar.slice(0, 500);
@@ -198,17 +194,14 @@ router.put('/', async (req, res) => {
     update.timezone = b.timezone;
   }
 
-  if (Object.keys(update).length === 0) {
-    return res.status(400).json({ success: false, error: 'Aucune donnée à enregistrer.' });
-  }
-
   try {
+    // Utilisation d'un upsert pour insérer ou mettre à jour la ligne sans échec
     const { data, error } = await req.db
       .from('team_member')
-      .update(update)
-      .eq('id', req.user.id)
+      .upsert(update, { onConflict: 'id' })
       .select('id, name, email, bio, avatar, timezone')
       .single();
+
     if (error) return res.status(400).json({ success: false, error: error.message });
     res.json({ success: true, profile: data });
   } catch (err) {
@@ -317,7 +310,7 @@ router.post('/reference-calendar/upload', requireOwner, withUpload, async (req, 
     await saveReferenceCalendar(req, content, req.file.originalname.slice(0, 200));
     res.json({ success: true, message: 'Calendrier de référence importé.', characters: content.length });
   } catch (err) {
-    res.status(err.status || 500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message});
   }
 });
 
