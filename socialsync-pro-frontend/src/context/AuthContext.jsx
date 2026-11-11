@@ -1,9 +1,12 @@
 // socialsync-pro-frontend/src/context/AuthContext.jsx
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { api, getActiveSpaceId, setActiveSpaceId } from '../services/api';
 
 const AuthContext = createContext(null);
+
+// Événements qui doivent réellement recalculer les espaces
+const RELOAD_EVENTS = ['SIGNED_IN', 'SIGNED_OUT', 'USER_UPDATED'];
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
@@ -13,74 +16,113 @@ export function AuthProvider({ children }) {
   const [ownerProfile, setOwnerProfile] = useState(null);
   const [myProfile, setMyProfile] = useState(null);
 
-  // Profil du propriétaire de l'espace actif (nom, photo, bio) : lu dans team_member
+  // Garde l'ID utilisateur courant pour éviter les rechargements inutiles
+  const currentUserId = useRef(null);
+
   const loadOwnerProfile = useCallback(async (ownerId) => {
-    const { data } = await supabase
-      .from('team_member')
-      .select('id, name, email, avatar, bio')
-      .eq('id', ownerId)
-      .maybeSingle();
-    setOwnerProfile(data ?? null);
+    try {
+      const { data } = await supabase
+        .from('team_member')
+        .select('id, name, email, avatar, bio')
+        .eq('id', ownerId)
+        .maybeSingle();
+      setOwnerProfile(data ?? null);
+    } catch (err) {
+      console.error('Profil propriétaire :', err);
+    }
   }, []);
 
-  // Mon propre profil (nom, photo, fuseau) : utilisé dans « Mon profil »
   const loadMyProfile = useCallback(async (userId) => {
-    const { data } = await supabase
-      .from('team_member')
-      .select('id, name, email, avatar, bio, timezone')
-      .eq('id', userId)
-      .maybeSingle();
-    setMyProfile(data ?? null);
+    try {
+      const { data } = await supabase
+        .from('team_member')
+        .select('id, name, email, avatar, bio, timezone')
+        .eq('id', userId)
+        .maybeSingle();
+      setMyProfile(data ?? null);
+    } catch (err) {
+      console.error('Mon profil :', err);
+    }
   }, []);
 
   const loadSpaces = useCallback(async (user) => {
-    // Accepte les invitations en attente pour cet e-mail
-    await api.team.acceptInvitations().catch(() => {});
+    // Invitations : lancées en arrière-plan, jamais bloquantes
+    api.team.acceptInvitations().catch((err) => {
+      console.warn('Acceptation des invitations ignorée :', err.message);
+    });
 
-    // Lecture par RLS : seulement mes propres rattachements
-    const { data: links } = await supabase
-      .from('memberships')
-      .select('owner_id, role')
-      .eq('user_id', user.id)
-      .eq('status', 'active');
+    try {
+      // Lecture par RLS : seulement mes propres rattachements
+      const { data: links } = await supabase
+        .from('memberships')
+        .select('owner_id, role')
+        .eq('user_id', user.id)
+        .eq('status', 'active');
 
-    const ownerIds = (links || []).map((l) => l.owner_id);
-    const { data: owners } = ownerIds.length
-      ? await supabase.from('team_member').select('id, name').in('id', ownerIds)
-      : { data: [] };
-    const names = Object.fromEntries((owners || []).map((o) => [o.id, o.name]));
+      const ownerIds = (links || []).map((l) => l.owner_id);
+      const { data: owners } = ownerIds.length
+        ? await supabase.from('team_member').select('id, name').in('id', ownerIds)
+        : { data: [] };
+      const names = Object.fromEntries((owners || []).map((o) => [o.id, o.name]));
 
-    const list = [
-      { ownerId: user.id, ownerName: 'Mon espace', role: 'Propriétaire' },
-      ...(links || []).map((l) => ({
-        ownerId: l.owner_id,
-        ownerName: names[l.owner_id] || 'Espace partagé',
-        role: l.role,
-      })),
-    ];
+      const list = [
+        { ownerId: user.id, ownerName: 'Mon espace', role: 'Propriétaire' },
+        ...(links || []).map((l) => ({
+          ownerId: l.owner_id,
+          ownerName: names[l.owner_id] || 'Espace partagé',
+          role: l.role,
+        })),
+      ];
 
-    const saved = getActiveSpaceId();
-    const chosen = list.find((s) => s.ownerId === saved) || list[0];
+      const saved = getActiveSpaceId();
+      const chosen = list.find((s) => s.ownerId === saved) || list[0];
 
-    setSpaces(list);
-    setActiveSpace(chosen);
-    setActiveSpaceId(chosen.ownerId);
+      setSpaces(list);
+      setActiveSpace(chosen);
+      setActiveSpaceId(chosen.ownerId);
 
-    await Promise.all([loadOwnerProfile(chosen.ownerId), loadMyProfile(user.id)]);
+      await Promise.all([loadOwnerProfile(chosen.ownerId), loadMyProfile(user.id)]);
+    } catch (err) {
+      // Une erreur de lecture ne doit pas bloquer l'application
+      console.error('Chargement des espaces :', err);
+    }
   }, [loadOwnerProfile, loadMyProfile]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session);
-      if (session?.user) await loadSpaces(session.user);
-      setLoadingSession(false);
-    });
+    let mounted = true;
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, s) => {
+    supabase.auth
+      .getSession()
+      .then(async ({ data: { session: current } }) => {
+        if (!mounted) return;
+        setSession(current);
+        if (current?.user) {
+          currentUserId.current = current.user.id;
+          await loadSpaces(current.user);
+        }
+      })
+      .catch((err) => console.error('Session :', err))
+      .finally(() => {
+        if (mounted) setLoadingSession(false);
+      });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, s) => {
+      // Au retour sur l'onglet, Supabase émet TOKEN_REFRESHED ou INITIAL_SESSION :
+      // on met seulement la session à jour, sans recharger les espaces ni démonter l'interface.
+      if (!RELOAD_EVENTS.includes(event)) {
+        if (s) setSession(s);
+        return;
+      }
+
       setSession(s);
+
       if (s?.user) {
+        // Pas de rechargement si c'est le même utilisateur déjà chargé
+        if (event === 'SIGNED_IN' && currentUserId.current === s.user.id) return;
+        currentUserId.current = s.user.id;
         await loadSpaces(s.user);
       } else {
+        currentUserId.current = null;
         setSpaces([]);
         setActiveSpace(null);
         setOwnerProfile(null);
@@ -89,7 +131,10 @@ export function AuthProvider({ children }) {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, [loadSpaces]);
 
   const switchSpace = async (ownerId) => {
