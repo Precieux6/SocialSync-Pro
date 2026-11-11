@@ -23,20 +23,31 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Nettoie une URL : espaces et slash final retirés (évite les faux refus CORS)
+const cleanOrigin = (s) => String(s || '').trim().replace(/\/+$/, '');
+
 const allowedOrigins = [
-  ...(process.env.CLIENT_URL || '').split(',').map((s) => s.trim()).filter(Boolean),
+  ...(process.env.CLIENT_URL || '').split(',').map(cleanOrigin).filter(Boolean),
+  ...(process.env.APP_URL ? [cleanOrigin(process.env.APP_URL)] : []),
   ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000', 'http://localhost:5173'] : []),
 ];
 
+// Journal de démarrage : permet de vérifier dans les logs Vercel ce qui est réellement lu
+console.log('allowedOrigins :', allowedOrigins);
+
 app.use(helmet());
+
 app.use(cors({
   origin: (origin, callback) => {
+    // Pas d'origine (outils serveur, curl) ou origine autorisée : accepté
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error('Origine non autorisée par CORS'));
+    // Origine refusée : aucune erreur serveur, le navigateur bloquera la requête
+    return callback(null, false);
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Owner-Id'],
   credentials: true,
+  optionsSuccessStatus: 204,
 }));
 
 app.use(express.json({ limit: '200kb' }));
@@ -76,9 +87,6 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
   console.error('Erreur serveur :', err);
-  if (err.message === 'Origine non autorisée par CORS') {
-    return res.status(403).json({ success: false, error: 'Origine non autorisée.' });
-  }
   res.status(500).json({ success: false, error: 'Erreur interne.' });
 });
 
