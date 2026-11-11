@@ -59,10 +59,11 @@ export default function App() {
     }
   }, [ownSpace]);
 
+  // Chargement unique au montage ou lors du changement d'utilisateur/espace, sans boucle de rafraîchissement en arrière-plan
   useEffect(() => {
     if (!session || !activeSpace) return;
     refreshSetup();
-  }, [session, activeSpace, refreshSetup]);
+  }, [session?.user?.id, activeSpace?.ownerId]); // Dépendance stricte sur l'ID pour éviter les déclenchements multiples
 
   if (loadingSession) return <Loader />;
   if (!session) return <Login />;
