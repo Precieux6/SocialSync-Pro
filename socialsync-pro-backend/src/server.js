@@ -14,6 +14,7 @@ import mediaRoutes from './routes/media.js';
 import analyticsRoutes from './routes/analytics.js';
 import profileRoutes from './routes/profile.js';
 import setupRoutes from './routes/setup.js';
+import accountRoutes from './routes/account.js';
 
 import { requireAuth } from './middleware/auth.js';
 
@@ -22,18 +23,14 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Origines autorisées : CLIENT_URL (une ou plusieurs, séparées par des virgules) + localhost hors production
 const allowedOrigins = [
   ...(process.env.CLIENT_URL || '').split(',').map((s) => s.trim()).filter(Boolean),
-  ...(process.env.NODE_ENV !== 'production'
-    ? ['http://localhost:3000', 'http://localhost:5173']
-    : []),
+  ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000', 'http://localhost:5173'] : []),
 ];
 
 app.use(helmet());
 app.use(cors({
   origin: (origin, callback) => {
-    // Requêtes sans origine (curl, outils serveur) : autorisées, elles ne viennent pas d'un navigateur
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
     callback(new Error('Origine non autorisée par CORS'));
   },
@@ -44,7 +41,6 @@ app.use(cors({
 
 app.use(express.json({ limit: '200kb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use('/api/setup', requireAuth, setupRoutes);
 
 app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -59,12 +55,10 @@ app.use('/api/ai/', rateLimit({
   message: { success: false, error: "Trop de requêtes vers l'IA, veuillez réessayer plus tard." },
 }));
 
-// Publique
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Protégées : chaque route passe par requireAuth
 app.use('/api/calendar', requireAuth, calendarRoutes);
 app.use('/api/videos', requireAuth, videosRoutes);
 app.use('/api/comments', requireAuth, commentsRoutes);
@@ -73,6 +67,8 @@ app.use('/api/analytics', requireAuth, analyticsRoutes);
 app.use('/api/team', requireAuth, teamRoutes);
 app.use('/api/ai', requireAuth, aiRoutes);
 app.use('/api/profile', requireAuth, profileRoutes);
+app.use('/api/setup', requireAuth, setupRoutes);
+app.use('/api/account', requireAuth, accountRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Route introuvable.' });
@@ -80,7 +76,6 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
   console.error('Erreur serveur :', err);
-  // Erreur CORS : refus explicite plutôt qu'une erreur 500
   if (err.message === 'Origine non autorisée par CORS') {
     return res.status(403).json({ success: false, error: 'Origine non autorisée.' });
   }
