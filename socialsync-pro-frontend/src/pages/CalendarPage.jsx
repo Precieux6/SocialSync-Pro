@@ -66,7 +66,7 @@ export default function CalendarPage({ notify }) {
   const { isOwner } = useAuth();
   const [year, setYear] = useState(new Date().getUTCFullYear());
   const [monthCode, setMonthCode] = useState('NOV');
-  const month = MONTHS_LIST.find((m) => m.code === monthCode);
+  const month = MONTHS_LIST.find((m) => m.code === monthCode) || MONTHS_LIST[0];
   const start = useMemo(() => weekStartFor(year, monthCode), [year, monthCode]);
 
   const [themes, setThemes] = useState({});
@@ -77,7 +77,7 @@ export default function CalendarPage({ notify }) {
   const [editingWeek, setEditingWeek] = useState(null);
   const [draftTitle, setDraftTitle] = useState('');
   const [loading, setLoading] = useState(false);
-  const [adding, setAdding] = useState(null); // { date, weekNum }
+  const [adding, setAdding] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -129,7 +129,9 @@ export default function CalendarPage({ notify }) {
   const onPostCreated = async (post) => {
     setAdding(null);
     await load();
-    setSelectedId(post.id);
+    if (post && post.id) {
+      setSelectedId(post.id);
+    }
     notify('Publication ajoutée.');
   };
 
