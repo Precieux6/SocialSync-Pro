@@ -13,40 +13,58 @@ const input =
   'w-full bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-3 text-xs text-stone-900 focus:outline-none focus:border-gold-500';
 
 export default function ProfilePage({ notify }) {
-  const { user, isOwner } = useAuth();
-  const [loading, setLoading] = useState(true);
+  const { user, isOwner, myProfile, refreshProfiles } = useAuth();
+
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ name: '', bio: '', avatar: '', timezone: 'Europe/Paris' });
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [settings, setSettings] = useState(null);
+  const [form, setForm] = useState({ name: '', bio: '', avatar: '', timezone: 'Europe/Paris' });
   const [pw, setPw] = useState({ current: '', next: '', confirm: '' });
 
-  const load = async () => {
-    const r = await api.profile.get();
+  // Pré-remplissage depuis le profil du contexte
+  useEffect(() => {
+    if (!myProfile) return;
     setForm({
-      name: r.profile.name || '',
-      bio: r.profile.bio || '',
-      avatar: r.profile.avatar || '',
-      timezone: r.profile.timezone || 'Europe/Paris',
+      name: myProfile.name || '',
+      bio: myProfile.bio || '',
+      avatar: myProfile.avatar || '',
+      timezone: myProfile.timezone || 'Europe/Paris',
     });
-    setSettings(r.settings);
+  }, [myProfile]);
+
+  // Seul l'état de configuration IA (propriétaire) est chargé ici
+  const loadSettings = async () => {
+    if (!isOwner) return;
+    try {
+      const r = await api.profile.get();
+      setSettings(r.settings);
+    } catch (e) {
+      notify(e.message);
+    }
   };
 
   useEffect(() => {
-    load().catch((e) => notify(e.message)).finally(() => setLoading(false));
-  }, [notify]);
+    loadSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOwner]);
 
   const onAvatar = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file || !file.type.startsWith('image/')) {
       notify('Choisissez une image.');
       return;
     }
+    setUploadingAvatar(true);
     try {
       const url = await uploadFile('avatars', `${user.id}/avatar`, file);
+      // Le paramètre ?v= force le rafraîchissement de l'image après remplacement
       setForm((f) => ({ ...f, avatar: `${url}?v=${Date.now()}` }));
       notify('Photo importée. Pensez à enregistrer.');
     } catch (err) {
       notify(err.message);
+    } finally {
+      setUploadingAvatar(false);
     }
   };
 
@@ -54,6 +72,7 @@ export default function ProfilePage({ notify }) {
     setSaving(true);
     try {
       await api.profile.update(form);
+      await refreshProfiles();
       notify('Profil enregistré.');
     } catch (e) {
       notify(e.message);
@@ -74,69 +93,125 @@ export default function ProfilePage({ notify }) {
     }
   };
 
-  if (loading) return <p className="text-xs text-stone-500">Chargement...</p>;
+  if (!myProfile) return <p className="text-xs text-stone-500">Chargement du profil...</p>;
+
+  const displayName = form.name || myProfile.email || user?.email || 'Utilisateur';
+  const initial = displayName.trim().charAt(0).toUpperCase();
 
   return (
     <div className="space-y-6 max-w-3xl">
       <div className="bg-[#FAF7F2] p-6 rounded-3xl border border-[#E2D5C3]">
         <h2 className="text-2xl font-serif font-bold text-stone-900">Mon profil & paramètres</h2>
-        <p className="text-xs text-stone-500 mt-1">Vos informations personnelles, votre photo, votre fuseau horaire et votre sécurité.</p>
+        <p className="text-xs text-stone-500 mt-1">
+          Vos informations personnelles, votre photo, votre fuseau horaire et votre sécurité.
+        </p>
       </div>
 
       <div className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-3xl p-6 space-y-6 shadow-sm">
         <div className="flex items-center gap-4 border-b border-[#E2D5C3] pb-6">
           <div className="relative">
             {form.avatar ? (
-              <img src={form.avatar} alt="Avatar" className="w-16 h-16 rounded-2xl object-cover border-2 border-gold-500" />
+              <img
+                src={form.avatar}
+                alt={displayName}
+                className="w-16 h-16 rounded-2xl object-cover border-2 border-gold-500"
+              />
             ) : (
               <div className="w-16 h-16 rounded-2xl bg-stone-900 text-amber-200 flex items-center justify-center font-serif font-bold text-xl">
-                {(form.name || user.email || '?').charAt(0).toUpperCase()}
+                {initial}
               </div>
             )}
-            <label className="absolute -bottom-1 -right-1 bg-stone-900 text-amber-200 p-1.5 rounded-full cursor-pointer shadow text-[10px]">
+            <label
+              className={`absolute -bottom-1 -right-1 bg-stone-900 text-amber-200 p-1.5 rounded-full cursor-pointer shadow text-[10px] ${
+                uploadingAvatar ? 'opacity-50 pointer-events-none' : ''
+              }`}
+            >
               <i className="fa-solid fa-camera"></i>
               <input type="file" accept="image/*" className="hidden" onChange={onAvatar} />
             </label>
           </div>
           <div>
-            <h3 className="font-serif font-bold text-lg text-stone-900">{form.name || user.email}</h3>
-            <span className="text-xs text-stone-500">{user.email}</span>
+            <h3 className="font-serif font-bold text-lg text-stone-900">{displayName}</h3>
+            <span className="text-xs text-stone-500">{myProfile.email || user?.email}</span>
+            <span className="ml-2 text-[10px] font-bold text-gold-800">{isOwner ? 'Propriétaire' : 'Membre'}</span>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-stone-600 mb-1">Prénom & Nom</label>
+              <input
+                className={input}
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="Votre nom complet"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-stone-600 mb-1">Fuseau horaire</label>
+              <select
+                className={`${input} font-bold`}
+                value={form.timezone}
+                onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+              >
+                {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+              </select>
+            </div>
+          </div>
+
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-stone-600 mb-1">Prénom & Nom</label>
-            <input className={input} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <label className="block text-xs font-bold uppercase tracking-wider text-stone-600 mb-1">Bio</label>
+            <textarea
+              rows={3}
+              className={`${input} leading-relaxed`}
+              value={form.bio}
+              onChange={(e) => setForm({ ...form, bio: e.target.value })}
+            />
           </div>
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-stone-600 mb-1">Fuseau horaire</label>
-            <select className={`${input} font-bold`} value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })}>
-              {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
-            </select>
+
+          <div className="flex justify-end">
+            <button
+              onClick={saveProfile}
+              disabled={saving || uploadingAvatar}
+              className="px-6 py-3 bg-stone-900 text-amber-200 text-xs font-bold rounded-2xl shadow disabled:opacity-50"
+            >
+              {saving ? 'Enregistrement...' : 'Enregistrer le profil'}
+            </button>
           </div>
-        </div>
-
-        <div>
-          <label className="block text-xs font-bold uppercase tracking-wider text-stone-600 mb-1">Bio</label>
-          <textarea rows={3} className={`${input} leading-relaxed`} value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} />
-        </div>
-
-        <div className="flex justify-end">
-          <button onClick={saveProfile} disabled={saving} className="px-6 py-3 bg-stone-900 text-amber-200 text-xs font-bold rounded-2xl shadow disabled:opacity-50">
-            {saving ? 'Enregistrement...' : 'Enregistrer le profil'}
-          </button>
         </div>
 
         <div className="pt-6 border-t border-[#E2D5C3] space-y-4">
           <h4 className="font-serif font-bold text-sm text-stone-900">Sécurité</h4>
-          <input type="password" className={input} placeholder="Mot de passe actuel" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
+          <input
+            type="password"
+            className={input}
+            placeholder="Mot de passe actuel"
+            value={pw.current}
+            onChange={(e) => setPw({ ...pw, current: e.target.value })}
+          />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <input type="password" className={input} placeholder="Nouveau mot de passe" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} />
-            <input type="password" className={input} placeholder="Confirmer le nouveau mot de passe" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} />
+            <input
+              type="password"
+              className={input}
+              placeholder="Nouveau mot de passe"
+              value={pw.next}
+              onChange={(e) => setPw({ ...pw, next: e.target.value })}
+            />
+            <input
+              type="password"
+              className={input}
+              placeholder="Confirmer le nouveau mot de passe"
+              value={pw.confirm}
+              onChange={(e) => setPw({ ...pw, confirm: e.target.value })}
+            />
           </div>
           <div className="flex justify-end">
-            <button onClick={changePassword} disabled={!pw.current || !pw.next} className="px-5 py-2.5 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold disabled:opacity-50">
+            <button
+              onClick={changePassword}
+              disabled={!pw.current || !pw.next}
+              className="px-5 py-2.5 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold disabled:opacity-50"
+            >
               Changer le mot de passe
             </button>
           </div>
@@ -146,11 +221,20 @@ export default function ProfilePage({ notify }) {
           <div className="pt-6 border-t border-[#E2D5C3] space-y-6">
             <div className="space-y-3">
               <h4 className="font-serif font-bold text-sm text-stone-900">Intelligence artificielle (Claude)</h4>
-              <ClaudeKeyForm configured={Boolean(settings?.has_claude_key)} onSaved={() => load().catch(() => {})} notify={notify} />
+              <ClaudeKeyForm
+                configured={Boolean(settings?.has_claude_key)}
+                onSaved={loadSettings}
+                notify={notify}
+              />
             </div>
             <div className="space-y-3">
               <h4 className="font-serif font-bold text-sm text-stone-900">Calendrier éditorial de référence</h4>
-              <ReferenceCalendarForm configured={Boolean(settings?.has_reference_calendar)} onSaved={() => load().catch(() => {})} notify={notify} />
+              <ReferenceCalendarForm
+                configured={Boolean(settings?.has_reference_calendar)}
+                sourceName={settings?.reference_calendar_name}
+                onSaved={loadSettings}
+                notify={notify}
+              />
             </div>
           </div>
         )}
