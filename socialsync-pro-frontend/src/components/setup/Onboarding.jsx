@@ -3,25 +3,30 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../services/api';
 import { SocialAccountsForm, ClaudeKeyForm, ReferenceCalendarForm } from './SetupForms';
 
-const STEP_KEYS = ['socialAccounts', 'claudeKey', 'referenceCalendar'];
-
 const STEPS = [
   {
+    key: 'socialAccounts',
+    required: true,
     title: '1. Connecter vos comptes réseaux',
-    text: 'Renseignez les identifiants de vos comptes Instagram, Facebook, YouTube et TikTok. Un seul réseau suffit pour démarrer.',
+    text: 'Renseignez les identifiants d\'au moins un compte (Instagram, Facebook, YouTube ou TikTok). Obligatoire.',
   },
   {
-    title: '2. Ajouter votre clé API Claude',
-    text: "Cette clé alimente la génération des légendes et des contenus. Elle est chiffrée et réservée au propriétaire.",
+    key: 'referenceCalendar',
+    required: true,
+    title: '2. Calendrier éditorial de référence',
+    text: "Importez votre calendrier actuel. L'IA s'en imprègne avant de prendre le relais. Obligatoire.",
   },
   {
-    title: '3. Calendrier éditorial de référence',
-    text: "Importez votre calendrier actuel. L'IA s'en imprègne avant de prendre le relais pour les prochaines générations.",
+    key: 'claudeKey',
+    required: false,
+    title: '3. Clé API Claude',
+    text: 'Active la génération de légendes et de contenus. Facultatif : vous pourrez l\'ajouter plus tard dans « Mon profil ».',
   },
 ];
 
+// Premier étape obligatoire non terminée
 const firstOpen = (status) => {
-  const i = STEP_KEYS.findIndex((k) => !status[k]);
+  const i = STEPS.findIndex((s) => s.required && !status[s.key]);
   return i === -1 ? 0 : i;
 };
 
@@ -53,6 +58,12 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
     }
   };
 
+  // Passe l'étape facultative sans l'enregistrer
+  const skip = () => {
+    const next = STEPS.findIndex((s, i) => i > step && s.required && !status[s.key]);
+    setStep(next === -1 ? step + 1 : next);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#FAF7F2] flex items-center justify-center text-xs font-bold uppercase tracking-widest text-stone-500">
@@ -62,7 +73,8 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
   }
 
   const current = STEPS[step];
-  const doneCount = STEP_KEYS.filter((k) => status[k]).length;
+  const requiredTotal = STEPS.filter((s) => s.required).length;
+  const requiredDone = STEPS.filter((s) => s.required && status[s.key]).length;
 
   return (
     <div className="min-h-screen bg-[#FAF7F2] p-4 md:p-10 font-sans">
@@ -73,7 +85,7 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
             <div>
               <h1 className="font-serif font-bold text-xl text-stone-900">Bienvenue sur SocialSync Pro</h1>
               <p className="text-xs text-stone-500">
-                Terminez la configuration de votre studio ({doneCount} / {STEP_KEYS.length} étapes) pour accéder à l'interface.
+                Étapes obligatoires terminées : {requiredDone} / {requiredTotal}.
               </p>
             </div>
           </div>
@@ -81,15 +93,15 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {STEPS.map((s, i) => (
               <button
-                key={s.title}
+                key={s.key}
                 onClick={() => setStep(i)}
                 className={`text-left rounded-2xl border p-3 text-xs font-bold transition-all ${
                   i === step ? 'border-gold-500 bg-[#F4EFE6]' : 'border-[#E2D5C3] bg-[#FAF7F2] hover:border-gold-500'
                 }`}
               >
                 <span className="block">{s.title}</span>
-                <span className={`text-[10px] ${status[STEP_KEYS[i]] ? 'text-emerald-700' : 'text-amber-700'}`}>
-                  {status[STEP_KEYS[i]] ? '✓ Terminé' : 'À faire'}
+                <span className={`text-[10px] ${status[s.key] ? 'text-emerald-700' : s.required ? 'text-amber-700' : 'text-stone-500'}`}>
+                  {status[s.key] ? '✓ Terminé' : s.required ? 'À faire (obligatoire)' : 'Facultatif'}
                 </span>
               </button>
             ))}
@@ -102,9 +114,19 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
             <p className="text-xs text-stone-600 mt-1">{current.text}</p>
           </div>
 
-          {step === 0 && <SocialAccountsForm onSaved={onSaved} notify={notify} />}
-          {step === 1 && <ClaudeKeyForm configured={status.claudeKey} onSaved={onSaved} notify={notify} />}
-          {step === 2 && <ReferenceCalendarForm configured={status.referenceCalendar} onSaved={onSaved} notify={notify} />}
+          {current.key === 'socialAccounts' && <SocialAccountsForm onSaved={onSaved} notify={notify} />}
+          {current.key === 'claudeKey' && <ClaudeKeyForm configured={status.claudeKey} onSaved={onSaved} notify={notify} />}
+          {current.key === 'referenceCalendar' && (
+            <ReferenceCalendarForm configured={status.referenceCalendar} onSaved={onSaved} notify={notify} />
+          )}
+
+          {!current.required && (
+            <div className="flex justify-end pt-2 border-t border-[#E2D5C3]">
+              <button onClick={skip} className="text-xs font-bold text-stone-600 hover:text-stone-900 px-4 py-2">
+                Plus tard
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="text-center">
