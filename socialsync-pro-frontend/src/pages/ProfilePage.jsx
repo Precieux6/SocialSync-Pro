@@ -42,7 +42,7 @@ export default function ProfilePage({ notify }) {
       const r = await api.profile.get();
       setSettings(r.settings);
     } catch (e) {
-      notify(e.message);
+      if (notify) notify(e.message);
     }
   };
 
@@ -51,7 +51,7 @@ export default function ProfilePage({ notify }) {
       const r = await api.account.status();
       setAccountState(r);
     } catch (e) {
-      notify(e.message);
+      if (notify) notify(e.message);
     }
   };
 
@@ -65,16 +65,16 @@ export default function ProfilePage({ notify }) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file || !file.type.startsWith('image/')) {
-      notify('Choisissez une image.');
+      if (notify) notify('Choisissez une image.');
       return;
     }
     setUploadingAvatar(true);
     try {
       const url = await uploadFile('avatars', `${user.id}/avatar`, file);
       setForm((f) => ({ ...f, avatar: `${url}?v=${Date.now()}` }));
-      notify('Photo importée. Pensez à enregistrer.');
+      if (notify) notify('Photo importée. Pensez à enregistrer.');
     } catch (err) {
-      notify(err.message);
+      if (notify) notify(err.message);
     } finally {
       setUploadingAvatar(false);
     }
@@ -84,10 +84,10 @@ export default function ProfilePage({ notify }) {
     setSaving(true);
     try {
       await api.profile.update(form);
-      await refreshProfiles();
-      notify('Profil enregistré.');
+      if (refreshProfiles) await refreshProfiles();
+      if (notify) notify('Profil enregistré.');
     } catch (e) {
-      notify(e.message);
+      if (notify) notify(e.message);
     } finally {
       setSaving(false);
     }
@@ -99,9 +99,9 @@ export default function ProfilePage({ notify }) {
     try {
       await api.profile.changePassword(pw.current, pw.next);
       setPw({ current: '', next: '', confirm: '' });
-      notify('Mot de passe modifié.');
+      if (notify) notify('Mot de passe modifié.');
     } catch (e) {
-      notify(e.message);
+      if (notify) notify(e.message);
     }
   };
 
@@ -109,11 +109,11 @@ export default function ProfilePage({ notify }) {
     setDangerBusy(true);
     try {
       const r = await api.account.deactivate(confirmText.trim());
-      notify('Compte désactivé. Suppression définitive prévue dans 30 jours.');
+      if (notify) notify('Compte désactivé. Suppression définitive prévue dans 30 jours.');
       setConfirmText('');
       setAccountState({ success: true, deactivatedAt: new Date().toISOString(), deletionScheduledFor: r.deletionScheduledFor });
     } catch (e) {
-      notify(e.message);
+      if (notify) notify(e.message);
     } finally {
       setDangerBusy(false);
     }
@@ -123,10 +123,10 @@ export default function ProfilePage({ notify }) {
     setDangerBusy(true);
     try {
       await api.account.reactivate();
-      notify('Compte réactivé.');
+      if (notify) notify('Compte réactivé.');
       await loadAccountState();
     } catch (e) {
-      notify(e.message);
+      if (notify) notify(e.message);
     } finally {
       setDangerBusy(false);
     }
@@ -138,20 +138,28 @@ export default function ProfilePage({ notify }) {
     try {
       await api.account.deleteNow(confirmText.trim());
       await supabase.auth.signOut().catch(() => {});
-      handleLogout();
+      if (handleLogout) handleLogout();
     } catch (e) {
-      notify(e.message);
+      if (notify) notify(e.message);
       setDangerBusy(false);
     }
   };
 
-  if (!myProfile) return <p className="text-xs text-stone-500">Chargement du profil...</p>;
+  // Correction : si myProfile met du temps à se charger mais que l'utilisateur est bien connecté, 
+  // on affiche un formulaire pré-rempli à partir des métadonnées de l'utilisateur plutôt qu'un blocage figé.
+  const profileData = myProfile || {
+    name: user?.user_metadata?.name || '',
+    email: user?.email || '',
+    bio: '',
+    avatar: '',
+    timezone: 'Europe/Paris'
+  };
 
-  const displayName = form.name || myProfile.email || user?.email || 'Utilisateur';
+  const displayName = form.name || profileData.email || user?.email || 'Utilisateur';
   const initial = displayName.trim().charAt(0).toUpperCase();
   const isDeactivated = Boolean(accountState?.deactivatedAt);
   const confirmOk = confirmText.trim().toUpperCase() === 'SUPPRIMER'
-    || confirmText.trim().toLowerCase() === (myProfile.email || user?.email || '').toLowerCase();
+    || confirmText.trim().toLowerCase() === (profileData.email || user?.email || '').toLowerCase();
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -183,7 +191,7 @@ export default function ProfilePage({ notify }) {
           </div>
           <div>
             <h3 className="font-serif font-bold text-lg text-stone-900">{displayName}</h3>
-            <span className="text-xs text-stone-500">{myProfile.email || user?.email}</span>
+            <span className="text-xs text-stone-500">{profileData.email || user?.email}</span>
             <span className="ml-2 text-[10px] font-bold text-gold-800">{isOwner ? 'Propriétaire' : 'Membre'}</span>
           </div>
         </div>
@@ -276,7 +284,7 @@ export default function ProfilePage({ notify }) {
               )}
               <input
                 className={input}
-                placeholder={`Tapez SUPPRIMER ou ${myProfile.email || user?.email || ''}`}
+                placeholder={`Tapez SUPPRIMER ou ${profileData.email || user?.email || ''}`}
                 value={confirmText}
                 onChange={(e) => setConfirmText(e.target.value)}
               />
