@@ -1,7 +1,9 @@
 // socialsync-pro-frontend/src/services/api.js
 import { supabase } from '../supabaseClient';
 
-const API_URL = `${(import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/$/, '')}/api`;
+const API_URL = import.meta.env.VITE_API_URL 
+  ? `${import.meta.env.VITE_API_URL.replace(/\/$/, '')}/api` 
+  : '/api';
 const STORAGE_KEY = 'socialsync.activeSpaceId';
 
 let activeSpaceId = localStorage.getItem(STORAGE_KEY);
