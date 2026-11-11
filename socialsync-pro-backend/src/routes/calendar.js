@@ -137,7 +137,6 @@ async function ensureBlock(req, start, startWeek) {
         if (have.has(`${post_date}|${format}|instagram`)) continue;
         rows.push({
           owner_id: req.ownerId,
-          user_id: req.user.id,
           post_date,
           week_num: weekNum,
           day_index: d,
@@ -268,7 +267,6 @@ router.post('/posts', async (req, res) => {
       .from('editorial_posts')
       .insert([{
         owner_id: req.ownerId,
-        user_id: req.user.id,
         post_date: postDate,
         week_num: weekNum,
         day_index: dayIndexOf(postDate),
