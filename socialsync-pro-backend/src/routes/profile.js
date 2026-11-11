@@ -112,12 +112,34 @@ async function saveReferenceCalendar(req, content, sourceName) {
 
 router.get('/', async (req, res) => {
   try {
-    const { data: profile, error } = await req.db
+    let { data: profile, error } = await req.db
       .from('team_member')
       .select('id, name, email, bio, avatar, timezone')
       .eq('id', req.user.id)
       .maybeSingle();
+
     if (error) return res.status(500).json({ success: false, error: error.message });
+
+    // Si le profil n'existe pas encore dans team_member, on l'initialise à la volée
+    if (!profile) {
+      const defaultProfile = {
+        id: req.user.id,
+        email: req.user.email || '',
+        name: req.user.user_metadata?.name || '',
+        bio: '',
+        avatar: '',
+        timezone: 'Europe/Paris'
+      };
+      const { data: created, error: createErr } = await req.db
+        .from('team_member')
+        .upsert([defaultProfile], { onConflict: 'id' })
+        .select('id, name, email, bio, avatar, timezone')
+        .maybeSingle();
+      
+      if (!createErr && created) {
+        profile = created;
+      }
+    }
 
     let settings = null;
     if (req.userRole === 'Propriétaire') {
