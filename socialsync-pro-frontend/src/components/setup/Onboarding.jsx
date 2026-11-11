@@ -34,6 +34,7 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
   const [status, setStatus] = useState({ socialAccounts: false, claudeKey: false, referenceCalendar: false });
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const load = useCallback(async () => {
     const r = await api.setup.status();
@@ -41,20 +42,30 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
     return r;
   }, []);
 
-  useEffect(() => {
-    load()
+  const initialLoad = useCallback(() => {
+    setLoading(true);
+    setLoadError(null);
+    return load()
       .then((r) => setStep(firstOpen(r.status)))
-      .catch((e) => notify(e.message))
+      .catch((e) => setLoadError(e.message))
       .finally(() => setLoading(false));
-  }, [load, notify]);
+  }, [load]);
+
+  useEffect(() => {
+    initialLoad();
+  }, [initialLoad]);
 
   const onSaved = async () => {
-    const r = await load();
-    if (r.complete) {
-      notify('Configuration terminée. Bienvenue dans SocialSync Pro !');
-      onComplete();
-    } else {
-      setStep(firstOpen(r.status));
+    try {
+      const r = await load();
+      if (r.complete) {
+        notify('Configuration terminée. Bienvenue dans SocialSync Pro !');
+        onComplete();
+      } else {
+        setStep(firstOpen(r.status));
+      }
+    } catch (e) {
+      notify(e.message);
     }
   };
 
@@ -68,6 +79,30 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
     return (
       <div className="min-h-screen bg-[#FAF7F2] flex items-center justify-center text-xs font-bold uppercase tracking-widest text-stone-500">
         Chargement...
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-[#FAF7F2] flex items-center justify-center p-4">
+        <div className="bg-white border border-[#E2D5C3] rounded-3xl p-8 shadow-sm max-w-md w-full text-center space-y-4">
+          <p className="text-sm text-stone-800">{loadError}</p>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={initialLoad}
+              className="px-5 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow"
+            >
+              Réessayer
+            </button>
+            <button
+              onClick={onLogout}
+              className="px-5 py-2.5 rounded-xl bg-[#F4EFE6] text-stone-700 text-xs font-bold"
+            >
+              Se déconnecter
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
