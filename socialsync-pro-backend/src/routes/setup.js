@@ -36,7 +36,9 @@ function readSocial(encrypted) {
 
 const platformConfigured = (cfg, fields) => fields.every((f) => Boolean(cfg?.[f]));
 
-// GET /api/setup/status : état de la configuration du propriétaire
+// GET /api/setup/status
+// Étapes obligatoires : comptes réseaux (1) et calendrier de référence (3).
+// La clé Claude (2) est facultative : elle est signalée mais ne bloque pas.
 router.get('/status', requireOwner, async (req, res) => {
   try {
     const s = await readSettings(req);
@@ -46,7 +48,8 @@ router.get('/status', requireOwner, async (req, res) => {
       claudeKey: Boolean(s.claude_key_encrypted),
       referenceCalendar: Boolean(s.reference_calendar?.content),
     };
-    res.json({ success: true, status, complete: Object.values(status).every(Boolean) });
+    const complete = status.socialAccounts && status.referenceCalendar;
+    res.json({ success: true, status, required: ['socialAccounts', 'referenceCalendar'], complete });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
