@@ -24,7 +24,7 @@ const STEPS = [
   },
 ];
 
-// Premier étape obligatoire non terminée
+// Première étape obligatoire non terminée
 const firstOpen = (status) => {
   const i = STEPS.findIndex((s) => s.required && !status[s.key]);
   return i === -1 ? 0 : i;
@@ -32,9 +32,19 @@ const firstOpen = (status) => {
 
 export default function Onboarding({ onComplete, onLogout, notify }) {
   const [status, setStatus] = useState({ socialAccounts: false, claudeKey: false, referenceCalendar: false });
-  const [step, setStep] = useState(0);
+  
+  // Persistance de l'étape active dans le localStorage pour éviter de perdre le fil lors d'un rechargement
+  const [step, setStep] = useState(() => {
+    const savedStep = localStorage.getItem('onboarding_current_step');
+    return savedStep !== null ? parseInt(savedStep, 10) : 0;
+  });
+
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+
+  useEffect(() => {
+    localStorage.setItem('onboarding_current_step', step);
+  }, [step]);
 
   const load = useCallback(async () => {
     const r = await api.setup.status();
@@ -46,7 +56,13 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
     setLoading(true);
     setLoadError(null);
     return load()
-      .then((r) => setStep(firstOpen(r.status)))
+      .then((r) => {
+        // Si l'étape enregistrée en cache est valide, on la garde, sinon on prend la première étape ouverte
+        const targetStep = localStorage.getItem('onboarding_current_step') !== null 
+          ? parseInt(localStorage.getItem('onboarding_current_step'), 10) 
+          : firstOpen(r.status);
+        setStep(targetStep);
+      })
       .catch((e) => setLoadError(e.message))
       .finally(() => setLoading(false));
   }, [load]);
@@ -59,10 +75,14 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
     try {
       const r = await load();
       if (r.complete) {
+        localStorage.removeItem('onboarding_current_step');
+        localStorage.removeItem('social_accounts_draft');
+        localStorage.removeItem('claude_key_draft');
         notify('Configuration terminée. Bienvenue dans SocialSync Pro !');
         onComplete();
       } else {
-        setStep(firstOpen(r.status));
+        const nextStep = firstOpen(r.status);
+        setStep(nextStep);
       }
     } catch (e) {
       notify(e.message);
@@ -107,7 +127,7 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
     );
   }
 
-  const current = STEPS[step];
+  const current = STEPS[step] || STEPS[0];
   const requiredTotal = STEPS.filter((s) => s.required).length;
   const requiredDone = STEPS.filter((s) => s.required && status[s.key]).length;
 
