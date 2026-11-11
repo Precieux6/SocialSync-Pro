@@ -38,8 +38,16 @@ const PLATFORMS = [
 
 export function SocialAccountsForm({ onSaved, notify }) {
   const [current, setCurrent] = useState(null);
-  const [draft, setDraft] = useState({});
+  // Persistance du brouillon dans le localStorage pour éviter la perte de données
+  const [draft, setDraft] = useState(() => {
+    const saved = localStorage.getItem('social_accounts_draft');
+    return saved ? JSON.parse(saved) : {};
+  });
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('social_accounts_draft', JSON.stringify(draft));
+  }, [draft]);
 
   const reload = async () => {
     const r = await api.setup.getSocialAccounts();
@@ -67,6 +75,7 @@ export function SocialAccountsForm({ onSaved, notify }) {
     try {
       await api.setup.saveSocialAccounts(payload);
       setDraft({});
+      localStorage.removeItem('social_accounts_draft');
       await reload();
       notify('Comptes réseaux enregistrés.');
       if (onSaved) onSaved();
@@ -127,8 +136,15 @@ export function SocialAccountsForm({ onSaved, notify }) {
 }
 
 export function ClaudeKeyForm({ configured, onSaved, notify }) {
-  const [apiKey, setApiKey] = useState('');
+  // Persistance de la clé Claude dans le localStorage
+  const [apiKey, setApiKey] = useState(() => {
+    return localStorage.getItem('claude_key_draft') || '';
+  });
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('claude_key_draft', apiKey);
+  }, [apiKey]);
 
   const save = async () => {
     const k = apiKey.trim();
@@ -140,6 +156,7 @@ export function ClaudeKeyForm({ configured, onSaved, notify }) {
     try {
       await api.profile.saveClaudeKey(k);
       setApiKey('');
+      localStorage.removeItem('claude_key_draft');
       notify('Clé Claude vérifiée et enregistrée.');
       if (onSaved) onSaved();
     } catch (e) {
