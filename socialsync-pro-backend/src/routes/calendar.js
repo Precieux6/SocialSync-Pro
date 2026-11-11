@@ -84,7 +84,6 @@ function zonedToUtc(localStr, tz) {
   if (!m) return null;
   const [y, mo, d, h, mi] = m.slice(1).map(Number);
 
-  // Rejette les dates impossibles (ex. 31 février)
   const check = new Date(Date.UTC(y, mo - 1, d, h, mi));
   if (check.getUTCFullYear() !== y || check.getUTCMonth() + 1 !== mo || check.getUTCDate() !== d) {
     return null;
@@ -92,11 +91,10 @@ function zonedToUtc(localStr, tz) {
 
   const guess = Date.UTC(y, mo - 1, d, h, mi);
   let utc = guess - tzOffsetMs(guess, tz);
-  utc = guess - tzOffsetMs(utc, tz); // second passage : corrige les changements d'heure
+  utc = guess - tzOffsetMs(utc, tz);
   return new Date(utc);
 }
 
-// Fuseau du propriétaire : c'est lui qui fixe le planning de l'espace
 async function spaceTimezone(req) {
   const { data } = await req.db
     .from('team_member')
@@ -117,7 +115,6 @@ async function loadThemes(req) {
   return Object.fromEntries((data || []).map((t) => [t.week, t.title]));
 }
 
-// Crée les publications du gabarit manquantes pour la période (sans toucher aux existantes)
 async function ensureBlock(req, start, startWeek) {
   const end = addDays(start, 27);
   const { data: existing, error: eErr } = await req.db
@@ -171,7 +168,6 @@ async function loadPost(req, id) {
 
 // ---------- Thèmes ----------
 
-// GET /api/calendar/themes
 router.get('/themes', async (req, res) => {
   try {
     const { data, error } = await req.db
@@ -187,7 +183,6 @@ router.get('/themes', async (req, res) => {
   }
 });
 
-// PUT /api/calendar/themes/:weekNum : propriétaire seulement
 router.put('/themes/:weekNum', requireOwner, async (req, res) => {
   const weekNum = parseInt(req.params.weekNum, 10);
   const title = String(req.body?.title || '').trim().slice(0, 200);
@@ -224,7 +219,6 @@ router.put('/themes/:weekNum', requireOwner, async (req, res) => {
 
 // ---------- Publications ----------
 
-// GET /api/calendar/posts?start=YYYY-MM-DD&startWeek=N
 router.get('/posts', async (req, res) => {
   const block = parseBlock(req);
   if (block.error) return res.status(400).json({ success: false, error: block.error });
@@ -251,14 +245,13 @@ router.get('/posts', async (req, res) => {
       startWeek: block.startWeek,
       themes,
       timezone,
-      posts: data,
+      posts: data || [],
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// POST /api/calendar/posts : publication hors calendrier éditorial
 router.post('/posts', async (req, res) => {
   const postDate = String(req.body?.post_date || '');
   const format = String(req.body?.format || '');
@@ -293,7 +286,6 @@ router.post('/posts', async (req, res) => {
   }
 });
 
-// PUT /api/calendar/posts/:id : brief, légende, prompt image, tags, commentaire épinglé
 router.put('/posts/:id', async (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
 
@@ -338,7 +330,6 @@ router.put('/posts/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/calendar/posts/:id : supprime uniquement une publication hors plan
 router.delete('/posts/:id', async (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
 
@@ -364,9 +355,6 @@ router.delete('/posts/:id', async (req, res) => {
   }
 });
 
-// POST /api/calendar/posts/:id/schedule
-// Corps : { local_datetime: "AAAA-MM-JJTHH:mm" } interprété dans le fuseau du propriétaire,
-// ou { scheduled_at: ISO } si l'instant est déjà connu.
 router.post('/posts/:id/schedule', async (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
 
@@ -406,8 +394,6 @@ router.post('/posts/:id/schedule', async (req, res) => {
   }
 });
 
-// POST /api/calendar/posts/:id/publish-now
-// Enregistre une publication à envoyer immédiatement. L'envoi réel est fait par le worker.
 router.post('/posts/:id/publish-now', async (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
 
@@ -439,7 +425,6 @@ router.post('/posts/:id/publish-now', async (req, res) => {
   }
 });
 
-// POST /api/calendar/posts/:id/cancel : annule une programmation
 router.post('/posts/:id/cancel', async (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
 
