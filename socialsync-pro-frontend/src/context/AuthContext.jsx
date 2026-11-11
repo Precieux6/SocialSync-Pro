@@ -107,8 +107,6 @@ export function AuthProvider({ children }) {
       });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, s) => {
-      // Au retour sur l'onglet, Supabase émet TOKEN_REFRESHED ou INITIAL_SESSION :
-      // on met seulement la session à jour, sans recharger les espaces ni démonter l'interface.
       if (!RELOAD_EVENTS.includes(event)) {
         if (s) setSession(s);
         return;
@@ -117,7 +115,6 @@ export function AuthProvider({ children }) {
       setSession(s);
 
       if (s?.user) {
-        // Pas de rechargement si c'est le même utilisateur déjà chargé
         if (event === 'SIGNED_IN' && currentUserId.current === s.user.id) return;
         currentUserId.current = s.user.id;
         await loadSpaces(s.user);
@@ -145,7 +142,6 @@ export function AuthProvider({ children }) {
     await loadOwnerProfile(next.ownerId);
   };
 
-  // Rechargement après modification du profil (nom, photo, bio, fuseau)
   const refreshProfiles = useCallback(async () => {
     if (!session?.user) return;
     await Promise.all([
@@ -155,14 +151,17 @@ export function AuthProvider({ children }) {
   }, [session, activeSpace, loadOwnerProfile, loadMyProfile]);
 
   const handleLogout = async () => {
+    // Nettoyage des brouillons du localStorage lors de la déconnexion
+    localStorage.removeItem('onboarding_current_step');
+    localStorage.removeItem('social_accounts_draft');
+    localStorage.removeItem('claude_key_draft');
+
     await supabase.auth.signOut().catch(() => {});
     setActiveSpaceId(null);
   };
 
   const isOwner = activeSpace?.role === 'Propriétaire';
   const isOwnSpace = Boolean(session && activeSpace && activeSpace.ownerId === session.user.id);
-
-  // Nom affiché : toujours celui du propriétaire de l'espace, avec repli sur l'e-mail
   const ownerName = ownerProfile?.name || ownerProfile?.email || activeSpace?.ownerName || '';
 
   return (
