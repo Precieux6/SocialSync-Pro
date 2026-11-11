@@ -1,6 +1,6 @@
 // socialsync-pro-backend/src/routes/account.js
 import express from 'express';
-import { supabaseAdmin } from '../utils/supabaseAdmin.js';
+import { getSupabaseAdmin } from '../utils/supabaseAdmin.js';
 
 const router = express.Router();
 
@@ -8,7 +8,7 @@ const GRACE_DAYS = 30;
 
 // Membres actifs rattachés à mon espace (propriétaire)
 async function activeMembersOf(ownerId) {
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await getSupabaseAdmin()
     .from('memberships')
     .select('user_id')
     .eq('owner_id', ownerId)
@@ -20,17 +20,21 @@ async function activeMembersOf(ownerId) {
 
 // GET /api/account/status : état de la désactivation éventuelle
 router.get('/status', async (req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from('team_member')
-    .select('deactivated_at, deletion_scheduled_for')
-    .eq('id', req.user.id)
-    .maybeSingle();
-  if (error) return res.status(500).json({ success: false, error: error.message });
-  res.json({
-    success: true,
-    deactivatedAt: data?.deactivated_at ?? null,
-    deletionScheduledFor: data?.deletion_scheduled_for ?? null,
-  });
+  try {
+    const { data, error } = await getSupabaseAdmin()
+      .from('team_member')
+      .select('deactivated_at, deletion_scheduled_for')
+      .eq('id', req.user.id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ success: false, error: error.message });
+    res.json({
+      success: true,
+      deactivatedAt: data?.deactivated_at ?? null,
+      deletionScheduledFor: data?.deletion_scheduled_for ?? null,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // POST /api/account/deactivate : désactive le compte, suppression programmée dans 30 jours
@@ -57,7 +61,7 @@ router.post('/deactivate', async (req, res) => {
     const now = new Date();
     const scheduled = new Date(now.getTime() + GRACE_DAYS * 24 * 60 * 60 * 1000);
 
-    const { error } = await supabaseAdmin
+    const { error } = await getSupabaseAdmin()
       .from('team_member')
       .update({
         deactivated_at: now.toISOString(),
@@ -67,7 +71,10 @@ router.post('/deactivate', async (req, res) => {
     if (error) return res.status(500).json({ success: false, error: error.message });
 
     // Retire l'accès immédiat aux espaces partagés
-    await supabaseAdmin.from('memberships').update({ status: 'suspended' }).eq('user_id', req.user.id);
+    await getSupabaseAdmin()
+      .from('memberships')
+      .update({ status: 'suspended' })
+      .eq('user_id', req.user.id);
 
     res.json({ success: true, deletionScheduledFor: scheduled.toISOString() });
   } catch (err) {
@@ -77,14 +84,22 @@ router.post('/deactivate', async (req, res) => {
 
 // POST /api/account/reactivate : annule la désactivation pendant le délai
 router.post('/reactivate', async (req, res) => {
-  const { error } = await supabaseAdmin
-    .from('team_member')
-    .update({ deactivated_at: null, deletion_scheduled_for: null })
-    .eq('id', req.user.id);
-  if (error) return res.status(500).json({ success: false, error: error.message });
+  try {
+    const { error } = await getSupabaseAdmin()
+      .from('team_member')
+      .update({ deactivated_at: null, deletion_scheduled_for: null })
+      .eq('id', req.user.id);
+    if (error) return res.status(500).json({ success: false, error: error.message });
 
-  await supabaseAdmin.from('memberships').update({ status: 'active' }).eq('user_id', req.user.id).eq('status', 'suspended');
-  res.json({ success: true });
+    await getSupabaseAdmin()
+      .from('memberships')
+      .update({ status: 'active' })
+      .eq('user_id', req.user.id)
+      .eq('status', 'suspended');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // DELETE /api/account : suppression définitive immédiate (confirmation forte)
@@ -106,7 +121,7 @@ router.delete('/', async (req, res) => {
       }
     }
     await purgeUserData(req.user.id);
-    const { error } = await supabaseAdmin.auth.admin.deleteUser(req.user.id);
+    const { error } = await getSupabaseAdmin().auth.admin.deleteUser(req.user.id);
     if (error) return res.status(500).json({ success: false, error: error.message });
     res.json({ success: true });
   } catch (err) {
@@ -129,8 +144,9 @@ export async function purgeUserData(userId) {
     ['memberships', 'owner_id'],
     ['team_member', 'id'],
   ];
+  const admin = getSupabaseAdmin();
   for (const [table, col] of tables) {
-    const { error } = await supabaseAdmin.from(table).delete().eq(col, userId);
+    const { error } = await admin.from(table).delete().eq(col, userId);
     if (error) throw new Error(`Purge ${table} : ${error.message}`);
   }
 }
