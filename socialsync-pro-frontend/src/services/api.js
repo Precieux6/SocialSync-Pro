@@ -1,10 +1,13 @@
 // socialsync-pro-frontend/src/services/api.js
 import { supabase } from '../supabaseClient';
 
-const API_URL = import.meta.env.VITE_API_URL 
-  ? `${import.meta.env.VITE_API_URL.replace(/\/$/, '')}/api` 
+const API_URL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL.replace(/\/$/, '')}/api`
   : '/api';
 const STORAGE_KEY = 'socialsync.activeSpaceId';
+
+// Délai d'attente par défaut : 5 minutes
+export const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
 let activeSpaceId = localStorage.getItem(STORAGE_KEY);
 
@@ -25,15 +28,35 @@ async function authHeaders({ space = true } = {}) {
   return { headers, session };
 }
 
-async function request(path, { method = 'GET', body, space = true } = {}) {
+// Exécute un fetch avec délai d'attente. Lève une erreur lisible si le délai est dépassé.
+async function fetchWithTimeout(url, options, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error('Le serveur ne répond pas. Vérifiez votre connexion et réessayez.');
+    }
+    throw new Error('Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function request(path, { method = 'GET', body, space = true, timeoutMs } = {}) {
   const { headers } = await authHeaders({ space });
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
-  const res = await fetch(`${API_URL}${path}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const res = await fetchWithTimeout(
+    `${API_URL}${path}`,
+    {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    },
+    timeoutMs
+  );
 
   const json = await res.json().catch(() => ({ success: false, error: 'Réponse invalide du serveur.' }));
   if (!res.ok || json.success === false) {
@@ -42,11 +65,16 @@ async function request(path, { method = 'GET', body, space = true } = {}) {
   return json;
 }
 
-async function upload(path, file) {
+async function upload(path, file, timeoutMs) {
   const { headers } = await authHeaders();
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${API_URL}${path}`, { method: 'POST', headers, body: form });
+
+  const res = await fetchWithTimeout(
+    `${API_URL}${path}`,
+    { method: 'POST', headers, body: form },
+    timeoutMs
+  );
   const json = await res.json().catch(() => ({ success: false, error: 'Réponse invalide du serveur.' }));
   if (!res.ok || json.success === false) {
     throw new Error(json.error || `Erreur ${res.status}`);
