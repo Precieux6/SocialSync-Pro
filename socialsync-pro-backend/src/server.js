@@ -15,6 +15,7 @@ import analyticsRoutes from './routes/analytics.js';
 import profileRoutes from './routes/profile.js';
 import setupRoutes from './routes/setup.js';
 import accountRoutes from './routes/account.js';
+import internalRoutes from './routes/internal.js';
 
 import { requireAuth } from './middleware/auth.js';
 
@@ -23,7 +24,6 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Nettoie une URL : espaces et slash final retirés (évite les faux refus CORS)
 const cleanOrigin = (s) => String(s || '').trim().replace(/\/+$/, '');
 
 const allowedOrigins = [
@@ -32,20 +32,17 @@ const allowedOrigins = [
   ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000', 'http://localhost:5173'] : []),
 ];
 
-// Journal de démarrage : permet de vérifier dans les logs Vercel ce qui est réellement lu
 console.log('allowedOrigins :', allowedOrigins);
 
 app.use(helmet());
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Pas d'origine (outils serveur, curl) ou origine autorisée : accepté
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    // Origine refusée : aucune erreur serveur, le navigateur bloquera la requête
     return callback(null, false);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Owner-Id'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Owner-Id', 'X-Cron-Secret'],
   credentials: true,
   optionsSuccessStatus: 204,
 }));
@@ -69,6 +66,9 @@ app.use('/api/ai/', rateLimit({
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
+
+// Route interne : protégée par CRON_SECRET, sans authentification utilisateur
+app.use('/api/internal', internalRoutes);
 
 app.use('/api/calendar', requireAuth, calendarRoutes);
 app.use('/api/videos', requireAuth, videosRoutes);
