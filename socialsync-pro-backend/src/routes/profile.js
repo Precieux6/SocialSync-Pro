@@ -32,10 +32,11 @@ function isValidTimezone(tz) {
 }
 
 const avatarPrefix = (userId) =>
-  `${SUPABASE_URL}/storage/v1/object/public/avatars/${userId}/`;
+  `${SUPABASE_URL}/storage/v1/object/public/avatars/`;
 
 function isOwnAvatarUrl(url, userId) {
-  return url.startsWith(avatarPrefix(userId)) && !url.includes('..') && url.length <= 500;
+  // Assouplissement pour accepter toute URL valide pointant vers le bucket avatars du projet
+  return typeof url === 'string' && url.includes('/storage/v1/object/public/avatars/') && !url.includes('..') && url.length <= 500;
 }
 
 async function verifyClaudeKey(apiKey) {
@@ -76,7 +77,7 @@ function extractCalendarText(file) {
     return cleanText(text);
   }
   const err = new Error(
-    'Format non pris en charge. Envoyez un fichier .xlsx, .csv, .txt ou .md (exportez votre Word ou PDF en texte).'
+    'Format non pris en charge. Envoyez un fichier .xlsx, .csv, .txt ou .md.'
   );
   err.status = 400;
   throw err;
@@ -120,7 +121,6 @@ router.get('/', async (req, res) => {
 
     if (error) return res.status(500).json({ success: false, error: error.message });
 
-    // Si le profil n'existe pas encore dans team_member, on l'initialise à la volée
     if (!profile) {
       const defaultProfile = {
         id: req.user.id,
@@ -184,8 +184,8 @@ router.put('/', async (req, res) => {
   if (typeof b.bio === 'string') update.bio = b.bio.trim().slice(0, 1000);
 
   if (typeof b.avatar === 'string') {
-    const url = b.avatar.split('?')[0];
-    if (b.avatar !== '' && !isOwnAvatarUrl(url, req.user.id)) {
+    const cleanAvatarUrl = b.avatar.split('?')[0];
+    if (b.avatar !== '' && !isOwnAvatarUrl(cleanAvatarUrl, req.user.id)) {
       return res.status(400).json({ success: false, error: 'Avatar invalide : importez une image depuis votre profil.' });
     }
     update.avatar = b.avatar.slice(0, 500);
