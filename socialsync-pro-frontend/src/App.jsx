@@ -42,11 +42,10 @@ export default function App() {
     setTimeout(() => setToast(null), 3500);
   }, []);
 
-  // Un utilisateur est dans son propre espace "propriétaire" s'il est connecté, propriétaire et sur son propre ID
   const ownSpace = Boolean(session && isOwner && isOwnSpace);
 
   const refreshSetup = useCallback(async () => {
-    // Si l'utilisateur consulte un espace partagé (invité) ou n'est pas propriétaire, pas d'onboarding requis
+    // Si ce n'est pas l'espace personnel du propriétaire, on valide d'office le setup pour éviter le blocage
     if (!ownSpace) {
       setSetup({ loading: false, complete: true, error: null });
       return;
@@ -67,13 +66,7 @@ export default function App() {
 
   if (loadingSession) return <Loader />;
   if (!session) return <Login />;
-  
-  // Si on est dans un espace partagé, on ne bloque pas sur le setup de l'onboarding
-  if (activeSpace && !ownSpace && setup.loading) {
-    // Force direct sans bloquer sur l'API setup propriétaire
-  } else if (!activeSpace || setup.loading) {
-    return <Loader text="Préparation de votre espace..." />;
-  }
+  if (!activeSpace || setup.loading) return <Loader text="Préparation de votre espace..." />;
 
   if (setup.error && ownSpace) {
     return (
@@ -88,7 +81,7 @@ export default function App() {
     );
   }
 
-  // L'onboarding ne s'affiche STRICTEMENT que si l'utilisateur est sur son propre espace et que le setup n'est pas complet
+  // L'onboarding ne doit s'afficher QUE si l'utilisateur est dans son propre espace personnel ET que le setup n'est pas complet
   if (ownSpace && !setup.complete) {
     return <Onboarding onComplete={refreshSetup} onLogout={handleLogout} notify={notify} />;
   }
