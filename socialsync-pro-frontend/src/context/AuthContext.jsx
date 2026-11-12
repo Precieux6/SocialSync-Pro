@@ -5,7 +5,6 @@ import { api, getActiveSpaceId, setActiveSpaceId } from '../services/api';
 
 const AuthContext = createContext(null);
 
-// Événements qui doivent réellement recalculer les espaces
 const RELOAD_EVENTS = ['SIGNED_IN', 'SIGNED_OUT', 'USER_UPDATED'];
 
 export function AuthProvider({ children }) {
@@ -16,7 +15,6 @@ export function AuthProvider({ children }) {
   const [ownerProfile, setOwnerProfile] = useState(null);
   const [myProfile, setMyProfile] = useState(null);
 
-  // Garde l'ID utilisateur courant pour éviter les rechargements inutiles
   const currentUserId = useRef(null);
 
   const loadOwnerProfile = useCallback(async (ownerId) => {
@@ -46,13 +44,14 @@ export function AuthProvider({ children }) {
   }, []);
 
   const loadSpaces = useCallback(async (user) => {
-    // Invitations : lancées en arrière-plan, jamais bloquantes
-    api.team.acceptInvitations().catch((err) => {
-      console.warn('Acceptation des invitations ignorée :', err.message);
-    });
+    // 1. On s'assure d'attendre l'acceptation des invitations en attente pour les lier immédiatement au compte
+    try {
+      await api.team.acceptInvitations();
+    } catch (err) {
+      console.warn('Acceptation des invitations :', err.message);
+    }
 
     try {
-      // Lecture par RLS : seulement mes propres rattachements
       const { data: links } = await supabase
         .from('memberships')
         .select('owner_id, role')
@@ -75,7 +74,13 @@ export function AuthProvider({ children }) {
       ];
 
       const saved = getActiveSpaceId();
-      const chosen = list.find((s) => s.ownerId === saved) || list[0];
+      let chosen = list.find((s) => s.ownerId === saved);
+
+      // Si l'utilisateur vient d'accepter une invitation et n'a pas encore d'espace actif sauvegardé,
+      // on bascule par défaut sur le premier espace partagé s'il existe pour lui éviter d'atterrir sur "Mon espace" vide.
+      if (!chosen) {
+        chosen = list.length > 1 ? list[1] : list[0];
+      }
 
       setSpaces(list);
       setActiveSpace(chosen);
@@ -83,7 +88,6 @@ export function AuthProvider({ children }) {
 
       await Promise.all([loadOwnerProfile(chosen.ownerId), loadMyProfile(user.id)]);
     } catch (err) {
-      // Une erreur de lecture ne doit pas bloquer l'application
       console.error('Chargement des espaces :', err);
     }
   }, [loadOwnerProfile, loadMyProfile]);
@@ -151,7 +155,6 @@ export function AuthProvider({ children }) {
   }, [session, activeSpace, loadOwnerProfile, loadMyProfile]);
 
   const handleLogout = async () => {
-    // Nettoyage des brouillons du localStorage lors de la déconnexion
     localStorage.removeItem('onboarding_current_step');
     localStorage.removeItem('social_accounts_draft');
     localStorage.removeItem('claude_key_draft');
