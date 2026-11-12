@@ -42,9 +42,11 @@ export default function App() {
     setTimeout(() => setToast(null), 3500);
   }, []);
 
+  // Un utilisateur est dans son propre espace "propriétaire" s'il est connecté, propriétaire et sur son propre ID
   const ownSpace = Boolean(session && isOwner && isOwnSpace);
 
   const refreshSetup = useCallback(async () => {
+    // Si l'utilisateur consulte un espace partagé (invité) ou n'est pas propriétaire, pas d'onboarding requis
     if (!ownSpace) {
       setSetup({ loading: false, complete: true, error: null });
       return;
@@ -61,13 +63,19 @@ export default function App() {
   useEffect(() => {
     if (!session || !activeSpace) return;
     refreshSetup();
-  }, [session?.user?.id, activeSpace?.ownerId]);
+  }, [session?.user?.id, activeSpace?.ownerId, ownSpace]);
 
   if (loadingSession) return <Loader />;
   if (!session) return <Login />;
-  if (!activeSpace || setup.loading) return <Loader text="Préparation de votre espace..." />;
+  
+  // Si on est dans un espace partagé, on ne bloque pas sur le setup de l'onboarding
+  if (activeSpace && !ownSpace && setup.loading) {
+    // Force direct sans bloquer sur l'API setup propriétaire
+  } else if (!activeSpace || setup.loading) {
+    return <Loader text="Préparation de votre espace..." />;
+  }
 
-  if (setup.error) {
+  if (setup.error && ownSpace) {
     return (
       <div className="min-h-screen bg-[#FAF7F2] flex items-center justify-center p-4">
         <div className="bg-white border border-[#E2D5C3] rounded-3xl p-8 max-w-md text-center space-y-4">
@@ -80,6 +88,7 @@ export default function App() {
     );
   }
 
+  // L'onboarding ne s'affiche STRICTEMENT que si l'utilisateur est sur son propre espace et que le setup n'est pas complet
   if (ownSpace && !setup.complete) {
     return <Onboarding onComplete={refreshSetup} onLogout={handleLogout} notify={notify} />;
   }
@@ -108,7 +117,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Barre d'en-tête mobile avec le logo officiel à la place du "S" */}
+      {/* Barre d'en-tête mobile avec le logo officiel */}
       <div className="md:hidden bg-[#F4EFE6] border-b border-[#E2D5C3] p-4 flex items-center justify-between">
         <button onClick={() => setTab('calendar')} className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg overflow-hidden bg-stone-900 flex items-center justify-center border border-gold-400 shrink-0">
