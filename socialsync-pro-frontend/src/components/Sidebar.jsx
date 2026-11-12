@@ -59,8 +59,13 @@ export default function Sidebar({
     if (onClose) onClose();
   };
 
-  // Résolution stricte : si ownerName est vide ou vaut par mégarde "MON ESPACE", on utilise votre nom configuré
-  const displayName = ownerName && ownerName !== 'MON ESPACE' ? ownerName : 'Précieux Trésor TOSSOU';
+  // Forçage intelligent : on ignore si ownerName renvoie "ESPACE PARTAGÉ" pour afficher ton vrai nom
+  const realUserName = 'Précieux Trésor TOSSOU';
+  const displayName = ownerName && ownerName !== 'ESPACE PARTAGÉ' && ownerName !== 'MON ESPACE' 
+    ? ownerName 
+    : realUserName;
+
+  const spaceTypeLabel = isOwnSpace ? 'Mon espace' : 'Espace partagé';
 
   return (
     <>
@@ -93,12 +98,12 @@ export default function Sidebar({
             </div>
           </button>
 
-          {/* Encadré Espace : 1ère ligne = type d'espace, 2ème ligne = nom dynamique de l'utilisateur */}
+          {/* Encadré Espace corrigé : 1ère ligne = Mon espace / Espace partagé, 2ème ligne = Ton nom */}
           <div className="p-3.5 rounded-2xl bg-stone-900 text-amber-200 flex items-center gap-3 shadow-lg">
             <OwnerAvatar src={ownerAvatar} name={displayName} />
             <div className="min-w-0">
               <span className="text-[10px] uppercase font-bold tracking-wider block opacity-75">
-                {isOwnSpace ? 'Mon espace' : 'Espace partagé'}
+                {spaceTypeLabel}
               </span>
               <h4 className="font-serif font-bold text-xs truncate">{displayName}</h4>
               {ownerBio && <span className="text-[10px] opacity-80 truncate block">{ownerBio}</span>}
