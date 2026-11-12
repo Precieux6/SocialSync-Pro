@@ -29,6 +29,7 @@ export default function App() {
     ownerName,
     ownerAvatar,
     ownerBio,
+    invitationError,
     handleLogout,
   } = useAuth();
 
@@ -42,11 +43,18 @@ export default function App() {
     setTimeout(() => setToast(null), 3500);
   }, []);
 
-  // Un utilisateur est dans son propre espace personnel s'il est propriétaire ET sur son propre ID
+  // Signale à l'utilisateur un échec d'acceptation d'invitation au lieu de l'ignorer
+  useEffect(() => {
+    if (invitationError) {
+      notify(`Invitation non acceptée : ${invitationError}`);
+    }
+  }, [invitationError, notify]);
+
+  // Espace propre du propriétaire connecté
   const ownSpace = Boolean(session && isOwner && isOwnSpace && activeSpace?.ownerId === session.user.id);
 
   const refreshSetup = useCallback(async () => {
-    // EXCLUSION TOTALE : Si l'utilisateur n'est pas propriétaire de l'espace actif, on valide d'office le setup
+    // Un membre invité (ou un espace partagé) n'a pas de configuration à faire
     if (!isOwner || !activeSpace || activeSpace.ownerId !== session?.user?.id) {
       setSetup({ loading: false, complete: true, error: null });
       return;
@@ -82,8 +90,8 @@ export default function App() {
     );
   }
 
-  // L'onboarding s'affiche STRICTEMENT si l'utilisateur est le propriétaire légitime et que son setup n'est pas complet
-  if (isOwner && activeSpace?.ownerId === session?.user?.id && !setup.complete) {
+  // L'onboarding ne concerne que le propriétaire sur son propre espace, tant que sa configuration est incomplète
+  if (ownSpace && !setup.complete) {
     return <Onboarding onComplete={refreshSetup} onLogout={handleLogout} notify={notify} />;
   }
 
@@ -115,9 +123,9 @@ export default function App() {
       <div className="md:hidden bg-[#F4EFE6] border-b border-[#E2D5C3] p-4 flex items-center justify-between">
         <button onClick={() => setTab('calendar')} className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg overflow-hidden bg-stone-900 flex items-center justify-center border border-gold-400 shrink-0">
-            <img 
-              src="/logo-social-sync-pro.png" 
-              alt="Logo" 
+            <img
+              src="/logo-social-sync-pro.png"
+              alt="Logo"
               className="w-full h-full object-cover"
               onError={(e) => {
                 e.target.style.display = 'none';
