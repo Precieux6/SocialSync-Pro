@@ -57,10 +57,10 @@ export default function Sidebar({
     if (onClose) onClose();
   };
 
-  // Filtre intelligent : si ownerName est vide ou vaut un rôle/type d'espace, on force ton vrai nom
-  const rawName = (ownerName || '').trim().toUpperCase();
+  // Utilisation dynamique du nom de l'utilisateur connecté (sans forcer de nom en dur)
+  const rawName = (ownerName || '').trim();
   const invalidNames = ['MON ESPACE', 'ESPACE PARTAGÉ', 'PROPRIÉTAIRE', 'ÉDITEUR', 'MEMBRE'];
-  const displayName = (!ownerName || invalidNames.includes(rawName)) ? 'Précieux Trésor TOSSOU' : ownerName;
+  const displayName = (!rawName || invalidNames.includes(rawName.toUpperCase())) ? 'Mon Espace' : ownerName;
 
   // Le rôle affiché sur la deuxième ligne
   const displayRole = roleLabel || (isOwner ? 'Propriétaire' : 'Membre');
@@ -96,7 +96,7 @@ export default function Sidebar({
             </div>
           </button>
 
-          {/* Encadré Espace : 1ère ligne = Nom de l'utilisateur, 2ème ligne = Rôle */}
+          {/* Encadré Espace : 1ère ligne = Nom dynamique de l'utilisateur, 2ème ligne = Rôle */}
           <div className="p-3.5 rounded-2xl bg-stone-900 text-amber-200 flex items-center gap-3 shadow-lg">
             <OwnerAvatar src={ownerAvatar} name={displayName} />
             <div className="min-w-0">
