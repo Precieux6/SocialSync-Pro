@@ -57,10 +57,13 @@ export default function Sidebar({
     if (onClose) onClose();
   };
 
-  // Résolution du nom d'utilisateur
-  const displayName = ownerName && ownerName !== 'ESPACE PARTAGÉ' ? ownerName : 'Précieux Trésor TOSSOU';
-  // Résolution du rôle
-  const displayRole = roleLabel || 'Membre';
+  // Filtre intelligent : si ownerName est vide ou vaut un rôle/type d'espace, on force ton vrai nom
+  const rawName = (ownerName || '').trim().toUpperCase();
+  const invalidNames = ['MON ESPACE', 'ESPACE PARTAGÉ', 'PROPRIÉTAIRE', 'ÉDITEUR', 'MEMBRE'];
+  const displayName = (!ownerName || invalidNames.includes(rawName)) ? 'Précieux Trésor TOSSOU' : ownerName;
+
+  // Le rôle affiché sur la deuxième ligne
+  const displayRole = roleLabel || (isOwner ? 'Propriétaire' : 'Membre');
 
   return (
     <>
