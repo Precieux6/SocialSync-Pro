@@ -42,11 +42,12 @@ export default function App() {
     setTimeout(() => setToast(null), 3500);
   }, []);
 
-  const ownSpace = Boolean(session && isOwner && isOwnSpace);
+  // Un utilisateur est dans son propre espace personnel s'il est propriétaire ET sur son propre ID
+  const ownSpace = Boolean(session && isOwner && isOwnSpace && activeSpace?.ownerId === session.user.id);
 
   const refreshSetup = useCallback(async () => {
-    // Si ce n'est pas l'espace personnel du propriétaire, on valide d'office le setup pour éviter le blocage
-    if (!ownSpace) {
+    // EXCLUSION TOTALE : Si l'utilisateur n'est pas propriétaire de l'espace actif, on valide d'office le setup
+    if (!isOwner || !activeSpace || activeSpace.ownerId !== session?.user?.id) {
       setSetup({ loading: false, complete: true, error: null });
       return;
     }
@@ -57,7 +58,7 @@ export default function App() {
     } catch (e) {
       setSetup({ loading: false, complete: false, error: e.message });
     }
-  }, [ownSpace]);
+  }, [isOwner, activeSpace, session?.user?.id]);
 
   useEffect(() => {
     if (!session || !activeSpace) return;
@@ -81,8 +82,8 @@ export default function App() {
     );
   }
 
-  // L'onboarding ne doit s'afficher QUE si l'utilisateur est dans son propre espace personnel ET que le setup n'est pas complet
-  if (ownSpace && !setup.complete) {
+  // L'onboarding s'affiche STRICTEMENT si l'utilisateur est le propriétaire légitime et que son setup n'est pas complet
+  if (isOwner && activeSpace?.ownerId === session?.user?.id && !setup.complete) {
     return <Onboarding onComplete={refreshSetup} onLogout={handleLogout} notify={notify} />;
   }
 
