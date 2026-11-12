@@ -46,7 +46,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const loadSpaces = useCallback(async (user) => {
-    // 1. Acceptation des invitations en attente (erreur exposée à l'interface)
+    // 1. Acceptation des invitations en attente
     try {
       await api.team.acceptInvitations();
       setInvitationError(null);
@@ -64,7 +64,7 @@ export function AuthProvider({ children }) {
         .eq('status', 'active');
       if (linksErr) throw linksErr;
 
-      // Un éventuel rattachement à son propre espace est ignoré : l'espace propre est toujours ajouté ci-dessous
+      // Un rattachement à son propre espace est ignoré : l'espace propre est toujours ajouté ci-dessous
       const sharedLinks = (links || []).filter((l) => l.owner_id !== user.id);
 
       // 3. Noms des propriétaires des espaces partagés
@@ -92,10 +92,8 @@ export function AuthProvider({ children }) {
 
       // 4. Choix de l'espace actif
       //    - Un espace partagé enregistré est respecté.
-      //    - Sans espace partagé enregistré, un utilisateur invité entre dans le premier espace partagé.
-      //    - Un espace propre enregistré n'est plus repris si l'utilisateur a des espaces partagés :
-      //      c'est la cause de l'écran d'onboarding affiché à un éditeur.
-      //    - Sans aucun espace partagé, l'espace propre est utilisé.
+      //    - Un invité sans espace enregistré entre dans le premier espace partagé.
+      //    - Sans espace partagé, l'espace propre est utilisé.
       const savedId = getActiveSpaceId();
       const chosen =
         sharedSpaces.length > 0
@@ -188,11 +186,21 @@ export function AuthProvider({ children }) {
   const isOwnSpace = Boolean(session && activeSpace?.isOwn);
   const ownerName = ownerProfile?.name || ownerProfile?.email || activeSpace?.ownerName || '';
 
+  // Identité de la personne connectée (affichée dans la barre latérale)
+  const user = session?.user ?? null;
+  const myName =
+    myProfile?.name ||
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email ||
+    '';
+  const myAvatar = myProfile?.avatar || user?.user_metadata?.avatar_url || '';
+
   return (
     <AuthContext.Provider
       value={{
         session,
-        user: session?.user ?? null,
+        user,
         loadingSession,
         spaces,
         activeSpace,
@@ -205,6 +213,8 @@ export function AuthProvider({ children }) {
         ownerAvatar: ownerProfile?.avatar || '',
         ownerBio: ownerProfile?.bio || '',
         myProfile,
+        myName,
+        myAvatar,
         refreshProfiles,
         switchSpace,
         handleLogout,
