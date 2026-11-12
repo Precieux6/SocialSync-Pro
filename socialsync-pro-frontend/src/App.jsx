@@ -42,7 +42,6 @@ export default function App() {
     setTimeout(() => setToast(null), 3500);
   }, []);
 
-  // La configuration initiale ne concerne que MON espace de propriétaire
   const ownSpace = Boolean(session && isOwner && isOwnSpace);
 
   const refreshSetup = useCallback(async () => {
@@ -59,11 +58,10 @@ export default function App() {
     }
   }, [ownSpace]);
 
-  // Chargement unique au montage ou lors du changement d'utilisateur/espace, sans boucle de rafraîchissement en arrière-plan
   useEffect(() => {
     if (!session || !activeSpace) return;
     refreshSetup();
-  }, [session?.user?.id, activeSpace?.ownerId]); // Dépendance stricte sur l'ID pour éviter les déclenchements multiples
+  }, [session?.user?.id, activeSpace?.ownerId]);
 
   if (loadingSession) return <Loader />;
   if (!session) return <Login />;
@@ -82,12 +80,10 @@ export default function App() {
     );
   }
 
-  // Parcours obligatoire pour un nouveau propriétaire
   if (ownSpace && !setup.complete) {
     return <Onboarding onComplete={refreshSetup} onLogout={handleLogout} notify={notify} />;
   }
 
-  // Un membre ne peut pas ouvrir les pages réservées au propriétaire
   const currentTab = !isOwner && OWNER_TABS.includes(tab) ? 'calendar' : tab;
 
   const renderPage = () => {
@@ -112,9 +108,22 @@ export default function App() {
         </div>
       )}
 
+      {/* Barre d'en-tête mobile avec le logo officiel à la place du "S" */}
       <div className="md:hidden bg-[#F4EFE6] border-b border-[#E2D5C3] p-4 flex items-center justify-between">
-        <button onClick={() => setTab('calendar')} className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-stone-900 text-amber-200 font-serif font-bold flex items-center justify-center">S</div>
+        <button onClick={() => setTab('calendar')} className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg overflow-hidden bg-stone-900 flex items-center justify-center border border-gold-400 shrink-0">
+            <img 
+              src="/logo-social-sync-pro.png" 
+              alt="Logo" 
+              className="w-full h-full object-cover"
+              onError={(e) => {
+                e.target.style.display = 'none';
+                if (e.currentTarget.parentElement) {
+                  e.currentTarget.parentElement.innerHTML = '<span class="text-amber-200 font-serif font-bold text-[10px]">SSP</span>';
+                }
+              }}
+            />
+          </div>
           <span className="font-serif font-bold text-stone-900 text-sm">SocialSync Pro</span>
         </button>
         <button onClick={() => setMenuOpen(true)} className="p-2 text-stone-700">
