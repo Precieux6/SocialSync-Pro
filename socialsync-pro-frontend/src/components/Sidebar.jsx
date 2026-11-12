@@ -1,7 +1,5 @@
 // socialsync-pro-frontend/src/components/Sidebar.jsx
 import React from 'react';
-// Importez votre logo depuis vos assets (ajustez le chemin selon l'emplacement réel de votre fichier image, ex: '../assets/logo.png')
-import logoImg from '../assets/logo.png'; 
 
 const MAIN_ITEMS = [
   { id: 'calendar', label: 'Calendrier éditorial', icon: 'fa-regular fa-calendar-days' },
@@ -74,12 +72,15 @@ export default function Sidebar({
           <button onClick={() => go('calendar')} className="flex items-center gap-3 text-left w-full">
             <div className="w-10 h-10 rounded-xl overflow-hidden bg-stone-900 flex items-center justify-center border border-gold-400 shadow shrink-0">
               <img 
-                src={logoImg} 
-                alt="SocialSync Pro Logo" 
+                src="/logo.png" 
+                alt="SocialSync Pro" 
                 className="w-full h-full object-cover"
                 onError={(e) => {
+                  // Fallback automatique si l'image n'est pas trouvée, affiche les initiales SSP sans bloquer Vercel
                   e.target.style.display = 'none';
-                  e.currentTarget.parentElement.innerText = 'SP';
+                  if (e.currentTarget.parentElement) {
+                    e.currentTarget.parentElement.innerHTML = '<span class="text-amber-200 font-serif font-bold text-xs">SSP</span>';
+                  }
                 }}
               />
             </div>
@@ -117,7 +118,7 @@ export default function Sidebar({
 
         <div className="pt-6 border-t border-[#E2D5C3] space-y-3">
           {roleLabel && (
-            <p className="text-[10px] text-stone-500 text-center">Votre rôle : {roleLabel} </p>
+            <p className="text-[10px] text-stone-500 text-center">Votre rôle : {roleLabel}</p>
           )}
           <button
             onClick={onLogout}
