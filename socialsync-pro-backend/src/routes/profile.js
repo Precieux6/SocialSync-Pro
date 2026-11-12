@@ -32,7 +32,13 @@ function isValidTimezone(tz) {
 }
 
 function isOwnAvatarUrl(url) {
-  return typeof url === 'string' && url.includes('/storage/v1/object/public/avatars/') && !url.includes('..') && url.length <= 500;
+  if (typeof url !== 'string') return false;
+  if (url === '') return true;
+  // Sécurité anti-traversée de chemin et limite de longueur
+  if (url.includes('..') || url.length > 500) return false;
+  
+  // Autorise les URLs de stockage Supabase, les avatars OAuth externes (Google, GitHub, etc.) et les URLs HTTP/HTTPS valides
+  return url.startsWith('http://') || url.startsWith('https://');
 }
 
 async function verifyClaudeKey(apiKey) {
