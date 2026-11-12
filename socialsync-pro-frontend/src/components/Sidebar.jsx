@@ -1,5 +1,7 @@
 // socialsync-pro-frontend/src/components/Sidebar.jsx
 import React from 'react';
+// Importation directe du logo pour garantir son intégrité et éviter les erreurs 404 de chemin statique
+import logoImg from '../assets/logo.png';
 
 const MAIN_ITEMS = [
   { id: 'calendar', label: 'Calendrier éditorial', icon: 'fa-regular fa-calendar-days' },
@@ -59,6 +61,9 @@ export default function Sidebar({
     if (onClose) onClose();
   };
 
+  // Sécurité pour éviter d'afficher deux fois "MON ESPACE" si ownerName renvoie par mégarde une chaîne générique
+  const displayName = ownerName && ownerName !== 'MON ESPACE' ? ownerName : 'Précieux Trésor TOSSOU';
+
   return (
     <>
       {open && <div className="fixed inset-0 bg-stone-900/50 z-40 md:hidden" onClick={onClose} />}
@@ -69,10 +74,11 @@ export default function Sidebar({
         }`}
       >
         <div className="space-y-8">
+          {/* Logo et Titre */}
           <button onClick={() => go('calendar')} className="flex items-center gap-3 text-left w-full">
             <div className="w-10 h-10 rounded-xl overflow-hidden bg-stone-900 flex items-center justify-center border border-gold-400 shadow shrink-0">
               <img 
-                src="/logo.png" 
+                src={logoImg} 
                 alt="SocialSync Pro Logo" 
                 className="w-full h-full object-cover"
                 onError={(e) => {
@@ -89,14 +95,14 @@ export default function Sidebar({
             </div>
           </button>
 
-          {/* Encadré Espace avec le libellé correct et le nom de l'utilisateur sur la deuxième ligne */}
+          {/* Encadré Espace avec le nom de l'utilisateur corrigé sur la deuxième ligne */}
           <div className="p-3.5 rounded-2xl bg-stone-900 text-amber-200 flex items-center gap-3 shadow-lg">
-            <OwnerAvatar src={ownerAvatar} name={ownerName} />
+            <OwnerAvatar src={ownerAvatar} name={displayName} />
             <div className="min-w-0">
               <span className="text-[10px] uppercase font-bold tracking-wider block opacity-75">
                 {isOwnSpace ? 'Mon espace' : 'Espace partagé'}
               </span>
-              <h4 className="font-serif font-bold text-xs truncate">{ownerName || '—'}</h4>
+              <h4 className="font-serif font-bold text-xs truncate">{displayName}</h4>
               {ownerBio && <span className="text-[10px] opacity-80 truncate block">{ownerBio}</span>}
             </div>
           </div>
