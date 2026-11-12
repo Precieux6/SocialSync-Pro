@@ -12,7 +12,6 @@ const DEFAULT_TZ = 'Europe/Paris';
 
 const FORMATS = ['Photo', 'Carrousel', 'Vidéo courte', 'Séance YouTube', 'Story', 'Question', 'Live'];
 
-// Gabarit hebdomadaire : index 0 = lundi
 const DAY_TEMPLATE = [
   ['Photo'],
   ['Carrousel', 'Story', 'Live'],
@@ -22,8 +21,6 @@ const DAY_TEMPLATE = [
   ['Photo'],
   ['Vidéo courte'],
 ];
-
-// ---------- Dates ----------
 
 const isoOf = (d) => d.toISOString().slice(0, 10);
 
@@ -38,7 +35,6 @@ const isValidDate = (iso) =>
 
 const dayIndexOf = (iso) => (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7;
 
-// Valide ?start=YYYY-MM-DD (un lundi) et ?startWeek=1..13
 function parseBlock(req) {
   const start = String(req.query.start || '');
   const startWeek = parseInt(req.query.startWeek ?? '1', 10);
@@ -50,8 +46,6 @@ function parseBlock(req) {
   return { start, startWeek };
 }
 
-// ---------- Fuseaux horaires ----------
-
 export function isValidTimezone(tz) {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: tz });
@@ -61,7 +55,6 @@ export function isValidTimezone(tz) {
   }
 }
 
-// Décalage (ms) du fuseau à un instant donné
 function tzOffsetMs(utcMs, tz) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
@@ -78,7 +71,6 @@ function tzOffsetMs(utcMs, tz) {
   return asUtc - Math.floor(utcMs / 1000) * 1000;
 }
 
-// Convertit « AAAA-MM-JJTHH:mm » saisi dans le fuseau donné en instant UTC
 function zonedToUtc(localStr, tz) {
   const m = LOCAL_DT_RE.exec(String(localStr || ''));
   if (!m) return null;
@@ -96,15 +88,17 @@ function zonedToUtc(localStr, tz) {
 }
 
 async function spaceTimezone(req) {
-  const { data } = await req.db
-    .from('team_member')
-    .select('timezone')
-    .eq('id', req.ownerId)
-    .maybeSingle();
-  return data?.timezone && isValidTimezone(data.timezone) ? data.timezone : DEFAULT_TZ;
+  try {
+    const { data } = await req.db
+      .from('team_member')
+      .select('timezone')
+      .eq('id', req.ownerId)
+      .maybeSingle();
+    return data?.timezone && isValidTimezone(data.timezone) ? data.timezone : DEFAULT_TZ;
+  } catch {
+    return DEFAULT_TZ;
+  }
 }
-
-// ---------- Données ----------
 
 async function loadThemes(req) {
   const { data, error } = await req.db
@@ -165,8 +159,6 @@ async function loadPost(req, id) {
   return data;
 }
 
-// ---------- Thèmes ----------
-
 router.get('/themes', async (req, res) => {
   try {
     const { data, error } = await req.db
@@ -215,8 +207,6 @@ router.put('/themes/:weekNum', requireOwner, async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
-// ---------- Publications ----------
 
 router.get('/posts', async (req, res) => {
   const block = parseBlock(req);
@@ -416,7 +406,7 @@ router.post('/posts/:id/publish-now', async (req, res) => {
     res.status(202).json({
       success: true,
       post: data,
-      message: "Publication enregistrée pour envoi immédiat. L'envoi vers le réseau sera effectué par le worker de publication.",
+      message: "Publication enregistrée pour envoi immédiat.",
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
