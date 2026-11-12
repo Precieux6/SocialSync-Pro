@@ -1,5 +1,7 @@
 // socialsync-pro-frontend/src/components/Sidebar.jsx
 import React from 'react';
+// Importez votre logo depuis vos assets (ajustez le chemin selon l'emplacement réel de votre fichier image, ex: '../assets/logo.png')
+import logoImg from '../assets/logo.png'; 
 
 const MAIN_ITEMS = [
   { id: 'calendar', label: 'Calendrier éditorial', icon: 'fa-regular fa-calendar-days' },
@@ -10,7 +12,6 @@ const MAIN_ITEMS = [
   { id: 'profile', label: 'Mon profil & paramètres', icon: 'fa-regular fa-user' },
 ];
 
-// Réservé au propriétaire de l'espace
 const ADMIN_ITEMS = [
   { id: 'team', label: 'Équipes & accès', icon: 'fa-solid fa-users' },
   { id: 'apis', label: 'APIs réseaux', icon: 'fa-solid fa-key' },
@@ -30,7 +31,6 @@ function NavItem({ item, active, onClick }) {
   );
 }
 
-// Photo du propriétaire, ou initiale de son nom si aucune photo n'est enregistrée
 function OwnerAvatar({ src, name }) {
   if (src) {
     return <img src={src} alt={name} className="w-10 h-10 rounded-xl object-cover border border-gold-500 shrink-0" />;
@@ -74,7 +74,7 @@ export default function Sidebar({
           <button onClick={() => go('calendar')} className="flex items-center gap-3 text-left w-full">
             <div className="w-10 h-10 rounded-xl overflow-hidden bg-stone-900 flex items-center justify-center border border-gold-400 shadow shrink-0">
               <img 
-                src="/logo.png" 
+                src={logoImg} 
                 alt="SocialSync Pro Logo" 
                 className="w-full h-full object-cover"
                 onError={(e) => {
@@ -117,7 +117,7 @@ export default function Sidebar({
 
         <div className="pt-6 border-t border-[#E2D5C3] space-y-3">
           {roleLabel && (
-            <p className="text-[10px] text-stone-500 text-center">Votre rôle : {roleLabel}</p>
+            <p className="text-[10px] text-stone-500 text-center">Votre rôle : {roleLabel} </p>
           )}
           <button
             onClick={onLogout}
