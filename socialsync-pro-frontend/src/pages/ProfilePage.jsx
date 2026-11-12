@@ -68,13 +68,14 @@ export default function ProfilePage({ notify }) {
       if (notify) notify('Choisissez une image.');
       return;
     }
+    if (!user?.id) return;
     setUploadingAvatar(true);
     try {
       const url = await uploadFile('avatars', `${user.id}/avatar`, file);
       setForm((f) => ({ ...f, avatar: `${url}?v=${Date.now()}` }));
-      if (notify) notify('Photo importée. Pensez à enregistrer.');
+      if (notify) notify('Photo importée. Pensez à enregistrer le profil.');
     } catch (err) {
-      if (notify) notify(err.message);
+      if (notify) notify(`Import de la photo impossible : ${err.message}`);
     } finally {
       setUploadingAvatar(false);
     }
@@ -83,15 +84,12 @@ export default function ProfilePage({ notify }) {
   const saveProfile = async () => {
     setSaving(true);
     try {
-      // On envoie à la fois 'name' et 'full_name' pour parer à toute attente du backend
-      const payload = {
+      await api.profile.update({
         name: form.name,
-        full_name: form.name,
         bio: form.bio,
         avatar: form.avatar,
         timezone: form.timezone,
-      };
-      await api.profile.update(payload);
+      });
       if (refreshProfiles) await refreshProfiles();
       if (notify) notify('Profil enregistré.');
     } catch (e) {
@@ -158,7 +156,7 @@ export default function ProfilePage({ notify }) {
     email: user?.email || '',
     bio: '',
     avatar: '',
-    timezone: 'Europe/Paris'
+    timezone: 'Europe/Paris',
   };
 
   const displayName = form.name || profileData.email || user?.email || 'Utilisateur';
@@ -191,7 +189,7 @@ export default function ProfilePage({ notify }) {
                 uploadingAvatar ? 'opacity-50 pointer-events-none' : ''
               }`}
             >
-              <i className="fa-solid fa-camera"></i>
+              <i className={`fa-solid ${uploadingAvatar ? 'fa-spinner fa-spin' : 'fa-camera'}`}></i>
               <input type="file" accept="image/*" className="hidden" onChange={onAvatar} />
             </label>
           </div>
