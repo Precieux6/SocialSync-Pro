@@ -27,8 +27,8 @@ export default function App() {
     activeSpace,
     userRole,
     ownerName,
-    ownerAvatar,
-    ownerBio,
+    myName,
+    myAvatar,
     invitationError,
     handleLogout,
   } = useAuth();
@@ -43,7 +43,7 @@ export default function App() {
     setTimeout(() => setToast(null), 3500);
   }, []);
 
-  // Signale à l'utilisateur un échec d'acceptation d'invitation au lieu de l'ignorer
+  // Signale un échec d'acceptation d'invitation
   useEffect(() => {
     if (invitationError) {
       notify(`Invitation non acceptée : ${invitationError}`);
@@ -54,7 +54,7 @@ export default function App() {
   const ownSpace = Boolean(session && isOwner && isOwnSpace && activeSpace?.ownerId === session.user.id);
 
   const refreshSetup = useCallback(async () => {
-    // Un membre invité (ou un espace partagé) n'a pas de configuration à faire
+    // Un membre invité n'a pas de configuration à faire
     if (!isOwner || !activeSpace || activeSpace.ownerId !== session?.user?.id) {
       setSetup({ loading: false, complete: true, error: null });
       return;
@@ -119,7 +119,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Barre d'en-tête mobile avec le logo officiel */}
+      {/* Barre d'en-tête mobile */}
       <div className="md:hidden bg-[#F4EFE6] border-b border-[#E2D5C3] p-4 flex items-center justify-between">
         <button onClick={() => setTab('calendar')} className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg overflow-hidden bg-stone-900 flex items-center justify-center border border-gold-400 shrink-0">
@@ -146,11 +146,10 @@ export default function App() {
         tab={currentTab}
         onNavigate={setTab}
         isOwner={isOwner}
-        isOwnSpace={isOwnSpace}
-        ownerName={ownerName && ownerName !== 'ESPACE PARTAGÉ' ? ownerName : 'Précieux Trésor TOSSOU'}
-        ownerAvatar={ownerAvatar}
-        ownerBio={ownerBio}
+        userName={myName}
+        userAvatar={myAvatar}
         roleLabel={userRole}
+        spaceName={isOwnSpace ? null : ownerName}
         onLogout={handleLogout}
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
