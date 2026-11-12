@@ -29,13 +29,19 @@ function NavItem({ item, active, onClick }) {
   );
 }
 
-function OwnerAvatar({ src, name }) {
+function UserAvatar({ src, name }) {
   if (src) {
-    return <img src={src} alt={name} className="w-10 h-10 rounded-xl object-cover border border-gold-500 shrink-0" />;
+    return (
+      <img
+        src={src}
+        alt={name}
+        className="w-10 h-10 rounded-xl object-cover border border-gold-500 shrink-0"
+      />
+    );
   }
   const initial = (name || '?').trim().charAt(0).toUpperCase();
   return (
-    <div className="w-10 h-10 rounded-xl bg-stone-900 text-amber-200 font-serif font-bold flex items-center justify-center shrink-0">
+    <div className="w-10 h-10 rounded-xl bg-amber-200 text-stone-900 font-serif font-bold flex items-center justify-center shrink-0">
       {initial}
     </div>
   );
@@ -45,9 +51,10 @@ export default function Sidebar({
   tab,
   onNavigate,
   isOwner,
-  ownerName,
-  ownerAvatar,
+  userName,
+  userAvatar,
   roleLabel,
+  spaceName,
   onLogout,
   open,
   onClose,
@@ -57,13 +64,7 @@ export default function Sidebar({
     if (onClose) onClose();
   };
 
-  // Utilisation dynamique du nom de l'utilisateur connecté (sans forcer de nom en dur)
-  const rawName = (ownerName || '').trim();
-  const invalidNames = ['MON ESPACE', 'ESPACE PARTAGÉ', 'PROPRIÉTAIRE', 'ÉDITEUR', 'MEMBRE'];
-  const displayName = (!rawName || invalidNames.includes(rawName.toUpperCase())) ? 'Mon Espace' : ownerName;
-
-  // Le rôle affiché sur la deuxième ligne
-  const displayRole = roleLabel || (isOwner ? 'Propriétaire' : 'Membre');
+  const displayName = (userName || '').trim() || 'Utilisateur';
 
   return (
     <>
@@ -78,9 +79,9 @@ export default function Sidebar({
           {/* Logo officiel */}
           <button onClick={() => go('calendar')} className="flex items-center gap-3 text-left w-full">
             <div className="w-10 h-10 rounded-xl overflow-hidden bg-stone-900 flex items-center justify-center border border-gold-400 shadow shrink-0">
-              <img 
-                src="/logo-social-sync-pro.png" 
-                alt="SocialSync Pro Logo" 
+              <img
+                src="/logo-social-sync-pro.png"
+                alt="SocialSync Pro Logo"
                 className="w-full h-full object-cover"
                 onError={(e) => {
                   e.target.style.display = 'none';
@@ -96,14 +97,21 @@ export default function Sidebar({
             </div>
           </button>
 
-          {/* Encadré Espace : 1ère ligne = Nom dynamique de l'utilisateur, 2ème ligne = Rôle */}
+          {/* Encadré : utilisateur connecté, son rôle, et l'espace consulté si ce n'est pas le sien */}
           <div className="p-3.5 rounded-2xl bg-stone-900 text-amber-200 flex items-center gap-3 shadow-lg">
-            <OwnerAvatar src={ownerAvatar} name={displayName} />
+            <UserAvatar src={userAvatar} name={displayName} />
             <div className="min-w-0">
               <h4 className="font-serif font-bold text-xs truncate">{displayName}</h4>
-              <span className="text-[10px] uppercase font-bold tracking-wider block opacity-75 mt-0.5">
-                {displayRole}
-              </span>
+              {roleLabel && (
+                <span className="text-[10px] uppercase font-bold tracking-wider block opacity-75 mt-0.5">
+                  {roleLabel}
+                </span>
+              )}
+              {spaceName && (
+                <span className="text-[10px] block opacity-75 truncate mt-1">
+                  Espace : {spaceName}
+                </span>
+              )}
             </div>
           </div>
 
@@ -122,10 +130,7 @@ export default function Sidebar({
           </nav>
         </div>
 
-        <div className="pt-6 border-t border-[#E2D5C3] space-y-3">
-          {roleLabel && (
-            <p className="text-[10px] text-stone-500 text-center">Votre rôle : {roleLabel}</p>
-          )}
+        <div className="pt-6 border-t border-[#E2D5C3]">
           <button
             onClick={onLogout}
             className="w-full bg-[#FAF7F2] hover:bg-[#E8DFC9] border border-[#E2D5C3] text-stone-800 text-xs font-bold py-3 px-4 rounded-2xl flex items-center justify-center gap-2 transition-all"
