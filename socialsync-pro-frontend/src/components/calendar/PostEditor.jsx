@@ -518,9 +518,9 @@ export default function PostEditor({
         />
       </section>
 
-      {/* Actions de programmation alignées en une seule ligne horizontale rigoureuse */}
+      {/* Actions de programmation alignées de manière fluide et rigoureuse */}
       {!readOnly && (
-        <section className="border-t border-[#E2D5C3] pt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <section className="border-t border-[#E2D5C3] pt-4 flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-1">
             <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
               Date de programmation ({ownerTimezone || 'Europe/Paris'})
@@ -533,7 +533,7 @@ export default function PostEditor({
             />
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap justify-end">
+          <div className="flex items-center gap-2 flex-wrap">
             {canDelete && (
               <button onClick={onDelete} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-bold whitespace-nowrap">
                 Supprimer
