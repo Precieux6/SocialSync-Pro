@@ -71,9 +71,17 @@ export default function Sidebar({
         }`}
       >
         <div className="space-y-8">
-          <button onClick={() => go('calendar')} className="flex items-center gap-3 text-left">
-            <div className="w-10 h-10 rounded-xl bg-stone-900 text-amber-200 font-serif font-bold flex items-center justify-center shadow">
-              S
+          <button onClick={() => go('calendar')} className="flex items-center gap-3 text-left w-full">
+            <div className="w-10 h-10 rounded-xl overflow-hidden bg-stone-900 flex items-center justify-center border border-gold-400 shadow shrink-0">
+              <img 
+                src="/logo.png" 
+                alt="SocialSync Pro Logo" 
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                  e.currentTarget.parentElement.innerText = 'SP';
+                }}
+              />
             </div>
             <div>
               <h1 className="font-serif font-bold text-stone-900 text-sm tracking-wide">SOCIALSYNC PRO</h1>
