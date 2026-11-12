@@ -59,6 +59,7 @@ export default function Sidebar({
     if (onClose) onClose();
   };
 
+  // Résolution stricte : si ownerName est vide ou vaut par mégarde "MON ESPACE", on utilise votre nom configuré
   const displayName = ownerName && ownerName !== 'MON ESPACE' ? ownerName : 'Précieux Trésor TOSSOU';
 
   return (
@@ -71,7 +72,7 @@ export default function Sidebar({
         }`}
       >
         <div className="space-y-8">
-          {/* Logo officiel pointant vers /logo-social-sync-pro.png */}
+          {/* Logo officiel */}
           <button onClick={() => go('calendar')} className="flex items-center gap-3 text-left w-full">
             <div className="w-10 h-10 rounded-xl overflow-hidden bg-stone-900 flex items-center justify-center border border-gold-400 shadow shrink-0">
               <img 
@@ -92,7 +93,7 @@ export default function Sidebar({
             </div>
           </button>
 
-          {/* Encadré Espace avec le nom correct de l'utilisateur sur la deuxième ligne */}
+          {/* Encadré Espace : 1ère ligne = type d'espace, 2ème ligne = nom de l'utilisateur */}
           <div className="p-3.5 rounded-2xl bg-stone-900 text-amber-200 flex items-center gap-3 shadow-lg">
             <OwnerAvatar src={ownerAvatar} name={displayName} />
             <div className="min-w-0">
