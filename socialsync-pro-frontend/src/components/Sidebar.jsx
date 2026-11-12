@@ -93,7 +93,7 @@ export default function Sidebar({
             </div>
           </button>
 
-          {/* Encadré Espace : 1ère ligne = type d'espace, 2ème ligne = nom de l'utilisateur */}
+          {/* Encadré Espace : 1ère ligne = type d'espace, 2ème ligne = nom dynamique de l'utilisateur */}
           <div className="p-3.5 rounded-2xl bg-stone-900 text-amber-200 flex items-center gap-3 shadow-lg">
             <OwnerAvatar src={ownerAvatar} name={displayName} />
             <div className="min-w-0">
