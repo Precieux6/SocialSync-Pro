@@ -5,6 +5,7 @@ import { api, getActiveSpaceId, setActiveSpaceId } from '../services/api';
 
 const AuthContext = createContext(null);
 
+const OWNER_ROLE = 'Propriétaire';
 const RELOAD_EVENTS = ['SIGNED_IN', 'SIGNED_OUT', 'USER_UPDATED'];
 
 export function AuthProvider({ children }) {
@@ -14,6 +15,7 @@ export function AuthProvider({ children }) {
   const [activeSpace, setActiveSpace] = useState(null);
   const [ownerProfile, setOwnerProfile] = useState(null);
   const [myProfile, setMyProfile] = useState(null);
+  const [invitationError, setInvitationError] = useState(null);
 
   const currentUserId = useRef(null);
 
@@ -44,42 +46,61 @@ export function AuthProvider({ children }) {
   }, []);
 
   const loadSpaces = useCallback(async (user) => {
+    // 1. Acceptation des invitations en attente (erreur exposée à l'interface)
     try {
       await api.team.acceptInvitations();
+      setInvitationError(null);
     } catch (err) {
       console.warn('Acceptation des invitations :', err.message);
+      setInvitationError(err.message);
     }
 
     try {
-      const { data: links } = await supabase
+      // 2. Rattachements actifs de l'utilisateur
+      const { data: links, error: linksErr } = await supabase
         .from('memberships')
         .select('owner_id, role')
         .eq('user_id', user.id)
         .eq('status', 'active');
+      if (linksErr) throw linksErr;
 
-      const ownerIds = (links || []).map((l) => l.owner_id);
+      // Un éventuel rattachement à son propre espace est ignoré : l'espace propre est toujours ajouté ci-dessous
+      const sharedLinks = (links || []).filter((l) => l.owner_id !== user.id);
+
+      // 3. Noms des propriétaires des espaces partagés
+      const ownerIds = sharedLinks.map((l) => l.owner_id);
       const { data: owners } = ownerIds.length
         ? await supabase.from('team_member').select('id, name').in('id', ownerIds)
         : { data: [] };
       const names = Object.fromEntries((owners || []).map((o) => [o.id, o.name]));
 
-      const list = [
-        { ownerId: user.id, ownerName: 'Mon espace', role: 'Propriétaire' },
-        ...(links || []).map((l) => ({
-          ownerId: l.owner_id,
-          ownerName: names[l.owner_id] || 'Espace partagé',
-          role: l.role,
-        })),
-      ];
+      const ownSpace = {
+        ownerId: user.id,
+        ownerName: 'Mon espace',
+        role: OWNER_ROLE,
+        isOwn: true,
+      };
 
-      const saved = getActiveSpaceId();
-      let chosen = list.find((s) => s.ownerId === saved);
+      const sharedSpaces = sharedLinks.map((l) => ({
+        ownerId: l.owner_id,
+        ownerName: names[l.owner_id] || 'Espace partagé',
+        role: l.role,
+        isOwn: false,
+      }));
 
-      // Si l'utilisateur est un invité sans espace explicitement sauvegardé, 
-      // on bascule automatiquement sur le premier espace partagé (list[1]) au lieu de "Mon espace" (list[0])
-      if (!chosen) {
-        chosen = list.length > 1 ? list[1] : list[0];
-      }
+      const list = [ownSpace, ...sharedSpaces];
+
+      // 4. Choix de l'espace actif
+      //    - Un espace partagé enregistré est respecté.
+      //    - Sans espace partagé enregistré, un utilisateur invité entre dans le premier espace partagé.
+      //    - Un espace propre enregistré n'est plus repris si l'utilisateur a des espaces partagés :
+      //      c'est la cause de l'écran d'onboarding affiché à un éditeur.
+      //    - Sans aucun espace partagé, l'espace propre est utilisé.
+      const savedId = getActiveSpaceId();
+      const chosen =
+        sharedSpaces.length > 0
+          ? sharedSpaces.find((s) => s.ownerId === savedId) ?? sharedSpaces[0]
+          : ownSpace;
 
       setSpaces(list);
       setActiveSpace(chosen);
@@ -127,6 +148,7 @@ export function AuthProvider({ children }) {
         setActiveSpace(null);
         setOwnerProfile(null);
         setMyProfile(null);
+        setInvitationError(null);
         setActiveSpaceId(null);
       }
     });
@@ -162,11 +184,8 @@ export function AuthProvider({ children }) {
     setActiveSpaceId(null);
   };
 
-  const isOwner = activeSpace?.role === 'Propriétaire';
-  
-  // Correction clé : Un espace n'est "propre" que si l'utilisateur est propriétaire ET qu'il regarde son propre espace
-  const isOwnSpace = Boolean(session && activeSpace && activeSpace.ownerId === session.user.id && isOwner);
-  
+  const isOwner = activeSpace?.role === OWNER_ROLE;
+  const isOwnSpace = Boolean(session && activeSpace?.isOwn);
   const ownerName = ownerProfile?.name || ownerProfile?.email || activeSpace?.ownerName || '';
 
   return (
@@ -180,6 +199,7 @@ export function AuthProvider({ children }) {
         userRole: activeSpace?.role ?? null,
         isOwner,
         isOwnSpace,
+        invitationError,
         ownerProfile,
         ownerName,
         ownerAvatar: ownerProfile?.avatar || '',
