@@ -45,10 +45,8 @@ export default function Sidebar({
   tab,
   onNavigate,
   isOwner,
-  isOwnSpace,
   ownerName,
   ownerAvatar,
-  ownerBio,
   roleLabel,
   onLogout,
   open,
@@ -59,13 +57,10 @@ export default function Sidebar({
     if (onClose) onClose();
   };
 
-  // Forçage intelligent : on ignore si ownerName renvoie "ESPACE PARTAGÉ" pour afficher ton vrai nom
-  const realUserName = 'Précieux Trésor TOSSOU';
-  const displayName = ownerName && ownerName !== 'ESPACE PARTAGÉ' && ownerName !== 'MON ESPACE' 
-    ? ownerName 
-    : realUserName;
-
-  const spaceTypeLabel = isOwnSpace ? 'Mon espace' : 'Espace partagé';
+  // Résolution du nom d'utilisateur
+  const displayName = ownerName && ownerName !== 'ESPACE PARTAGÉ' ? ownerName : 'Précieux Trésor TOSSOU';
+  // Résolution du rôle
+  const displayRole = roleLabel || 'Membre';
 
   return (
     <>
@@ -98,15 +93,14 @@ export default function Sidebar({
             </div>
           </button>
 
-          {/* Encadré Espace corrigé : 1ère ligne = Mon espace / Espace partagé, 2ème ligne = Ton nom */}
+          {/* Encadré Espace : 1ère ligne = Nom de l'utilisateur, 2ème ligne = Rôle */}
           <div className="p-3.5 rounded-2xl bg-stone-900 text-amber-200 flex items-center gap-3 shadow-lg">
             <OwnerAvatar src={ownerAvatar} name={displayName} />
             <div className="min-w-0">
-              <span className="text-[10px] uppercase font-bold tracking-wider block opacity-75">
-                {spaceTypeLabel}
-              </span>
               <h4 className="font-serif font-bold text-xs truncate">{displayName}</h4>
-              {ownerBio && <span className="text-[10px] opacity-80 truncate block">{ownerBio}</span>}
+              <span className="text-[10px] uppercase font-bold tracking-wider block opacity-75 mt-0.5">
+                {displayRole}
+              </span>
             </div>
           </div>
 
