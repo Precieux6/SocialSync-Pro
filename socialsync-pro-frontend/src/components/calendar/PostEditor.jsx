@@ -81,7 +81,7 @@ export default function PostEditor({
     set('slides', form.slides.filter((_, i) => i !== index));
   };
 
-  // Téléchargement du script au format texte brut simulant Word/PDF (ou blob)
+  // Téléchargement du script au format texte brut simulant Word/PDF
   const downloadScript = (format) => {
     const content = `TITRE DU POST : ${post.format} (${post.post_date})\nTHÈME : ${themeTitle}\n\nSCRIPT :\n${form.script || 'Aucun script rédigé.'}`;
     const blob = new Blob([content], { type: format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
@@ -233,7 +233,7 @@ export default function PostEditor({
         />
       </section>
 
-      {/* SECTION SPÉCIFIQUE CARROUSEL : Slides */}
+      {/* SECTION CARROUSEL : Slides */}
       {isCarrousel && (
         <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
           <div className="flex items-center justify-between">
@@ -265,7 +265,7 @@ export default function PostEditor({
         </section>
       )}
 
-      {/* SECTION SPÉCIFIQUE VIDÉOS : Script & Téléchargement Word / PDF */}
+      {/* SECTION VIDÉOS : Script & Téléchargement Word / PDF */}
       {isVideo && (
         <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -322,7 +322,7 @@ export default function PostEditor({
         <span className="text-[10px] text-stone-500">{form.caption.length} / 2200 caractères</span>
       </section>
 
-      {/* Prompt Image ou Prompt Miniature selon le format */}
+      {/* Prompt Image ou Miniature */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
@@ -353,7 +353,7 @@ export default function PostEditor({
           disabled={readOnly}
           maxLength={1000}
           onChange={(e) => set(isVideo ? 'thumbnail_prompt' : 'image_prompt', e.target.value)}
-          placeholder={isVideo ? "Description détaillée pour la miniature de la vidéo..." : "Description visuelle pour la génération d'image..."}
+          placeholder={isVideo ? "Description détaillée pour la miniature..." : "Description visuelle pour l'image..."}
           className={`${inputClass} font-mono`}
         />
       </section>
@@ -421,40 +421,40 @@ export default function PostEditor({
         />
       </section>
 
-      {/* Actions de planification et publication */}
+      {/* SECTION DU BAS PARFAITEMENT ALIGNÉE SUR UNE SEULE LIGNE */}
       {!readOnly && (
-        <section className="border-t border-[#E2D5C3] pt-4 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
-          <div className="space-y-2">
-            <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
-              Date de programmation ({ownerTimezone || 'Europe/Paris'})
+        <section className="border-t border-[#E2D5C3] pt-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-col gap-1 min-w-[220px]">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-stone-600">
+              Programmation ({ownerTimezone || 'Europe/Paris'})
             </label>
             <input
               type="datetime-local"
               value={scheduleAt}
               onChange={(e) => setScheduleAt(e.target.value)}
-              className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-2.5 text-xs font-bold text-stone-800 focus:outline-none"
+              className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-2 text-xs font-bold text-stone-800 focus:outline-none"
             />
           </div>
 
-          <div className="flex flex-wrap gap-2 justify-end">
+          <div className="flex flex-wrap items-center gap-2">
             {canDelete && (
-              <button onClick={onDelete} disabled={busy} type="button" className="px-5 py-2.5 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-bold">
+              <button onClick={onDelete} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-bold">
                 Supprimer
               </button>
             )}
-            <button onClick={onSave} disabled={busy} type="button" className="px-5 py-2.5 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold">
+            <button onClick={onSave} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold hover:bg-[#E8DFC9]">
               Enregistrer
             </button>
             {post.status === 'programme' ? (
-              <button onClick={onCancelSchedule} disabled={busy} type="button" className="px-5 py-2.5 rounded-xl bg-red-100 text-red-700 text-xs font-bold">
-                Annuler programmation
+              <button onClick={onCancelSchedule} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-red-100 text-red-700 text-xs font-bold">
+                Annuler
               </button>
             ) : (
               <>
-                <button onClick={onPublishNow} disabled={busy} type="button" className="px-5 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow">
-                  Publier maintenant
+                <button onClick={onPublishNow} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow hover:bg-emerald-800">
+                  Publier
                 </button>
-                <button onClick={onSchedule} disabled={busy} type="button" className="px-5 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow">
+                <button onClick={onSchedule} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow hover:bg-stone-800">
                   Programmer
                 </button>
               </>
