@@ -16,11 +16,14 @@ const toForm = (post) => ({
   brief: post.brief || '',
   caption: post.caption || '',
   image_prompt: post.image_prompt || '',
+  thumbnail_prompt: post.thumbnail_prompt || '',
+  script: post.script || '',
+  slides: post.slides || [''],
   tags: post.tags || [],
   first_comment: post.first_comment || '',
 });
 
-// Valeur « AAAA-MM-JJTHH:mm » d'un instant, exprimée dans le fuseau donné
+// Valeur « AAAA-MM-JJTHH:mm » d'un instant dans le fuseau donné
 const toLocalInputValue = (date, tz) => {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
@@ -54,6 +57,8 @@ export default function PostEditor({
 
   const readOnly = post.status === 'publie';
   const canDelete = post.is_adhoc && !readOnly;
+  const isVideo = ['Vidéo courte', 'Séance YouTube', 'Live'].includes(post.format);
+  const isCarrousel = post.format === 'Carrousel';
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -65,9 +70,32 @@ export default function PostEditor({
 
   const removeTag = (tag) => set('tags', form.tags.filter((t) => t !== tag));
 
-  // Enregistre le contenu et renvoie la publication mise à jour
+  // Gestion des slides pour le carrousel
+  const addSlide = () => set('slides', [...form.slides, '']);
+  const updateSlide = (index, value) => {
+    const newSlides = [...form.slides];
+    newSlides[index] = value;
+    set('slides', newSlides);
+  };
+  const removeSlide = (index) => {
+    set('slides', form.slides.filter((_, i) => i !== index));
+  };
+
+  // Téléchargement du script au format texte brut simulant Word/PDF (ou blob)
+  const downloadScript = (format) => {
+    const content = `TITRE DU POST : ${post.format} (${post.post_date})\nTHÈME : ${themeTitle}\n\nSCRIPT :\n${form.script || 'Aucun script rédigé.'}`;
+    const blob = new Blob([content], { type: format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `script-post-${post.id}.${format === 'pdf' ? 'pdf' : 'docx'}`;
+    a.click();
+    URL.revokeObjectURL(url);
+    notify(`Script téléchargé au format ${format.toUpperCase()}`);
+  };
+
   const save = async () => {
-    const r = await api.calendar.updatePost(post.id, form);
+    const r = await api.calendar.updatePost(post.id, { ...form, platform });
     onUpdated(r.post);
     return r.post;
   };
@@ -93,25 +121,28 @@ export default function PostEditor({
     withBusy(async () => {
       const r = await api.ai.caption(form.brief.trim() || post.format, themeTitle, platform);
       set('caption', r.caption || '');
-      notify("Légende générée. Pensez à l'enregistrer.");
+      notify("Légende générée.");
     });
 
   const onGeneratePrompt = () =>
     withBusy(async () => {
       const r = await api.ai.prompt(themeTitle, platform);
-      set('image_prompt', r.prompt || '');
+      if (isVideo) {
+        set('thumbnail_prompt', r.prompt || '');
+      } else {
+        set('image_prompt', r.prompt || '');
+      }
     });
 
-  const onCopyPrompt = async () => {
+  const onCopyText = async (text, label) => {
     try {
-      await navigator.clipboard.writeText(form.image_prompt);
-      notify('Prompt copié.');
+      await navigator.clipboard.writeText(text);
+      notify(`${label} copié.`);
     } catch {
-      notify('Copie impossible dans ce navigateur.');
+      notify('Copie impossible.');
     }
   };
 
-  // La valeur de scheduleAt est interprétée par le serveur dans le fuseau du propriétaire
   const onSchedule = () =>
     withBusy(async () => {
       await save();
@@ -121,7 +152,7 @@ export default function PostEditor({
     });
 
   const onPublishNow = () => {
-    if (!window.confirm('Publier maintenant ? La publication sera envoyée dès que le worker de publication sera actif.')) return;
+    if (!window.confirm('Publier maintenant ?')) return;
     withBusy(async () => {
       await save();
       const r = await api.calendar.publishNow(post.id);
@@ -138,7 +169,7 @@ export default function PostEditor({
     });
 
   const onDelete = () => {
-    if (!window.confirm('Supprimer cette publication hors plan ? Cette action est définitive.')) return;
+    if (!window.confirm('Supprimer cette publication ?')) return;
     withBusy(async () => {
       await api.calendar.deletePost(post.id);
       notify('Publication supprimée.');
@@ -150,36 +181,47 @@ export default function PostEditor({
     'w-full bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-3 text-xs text-stone-900 focus:outline-none focus:border-gold-500 leading-relaxed disabled:opacity-60';
 
   return (
-    <div className="bg-[#FAF7F2] border-2 border-gold-400 rounded-3xl p-6 space-y-6 shadow-sm">
+    <div className="bg-[#FAF7F2] border-2 border-gold-400 rounded-3xl p-6 space-y-6 shadow-2xl">
+      {/* En-tête */}
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 border-b border-[#E2D5C3] pb-4">
         <div>
           <span className="text-xs font-bold text-gold-700 uppercase tracking-widest">
-            Publication{post.is_adhoc ? ' hors plan' : ''}
+            Configuration · {post.format}{post.is_adhoc ? ' (hors plan)' : ''}
           </span>
-          <h3 className="font-serif font-bold text-xl text-stone-900">
+          <h3 className="font-serif font-bold text-xl text-stone-900 mt-1">
             {post.format} · {post.post_date}
           </h3>
           <p className="text-xs text-stone-500">Thème : {themeTitle}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={platform}
-            disabled={readOnly}
-            onChange={(e) => setPlatform(e.target.value)}
-            className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-2.5 text-xs font-bold text-stone-800 focus:outline-none disabled:opacity-60"
-          >
-            {PLATFORMS.map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
-          <button onClick={onClose} className="text-xs font-bold text-stone-600 hover:text-stone-900 px-3 py-2">
-            Fermer
-          </button>
+        <button onClick={onClose} className="text-xs font-bold text-stone-600 hover:text-stone-900 px-4 py-2 bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl">
+          Fermer ✕
+        </button>
+      </div>
+
+      {/* Alignement horizontal des 4 réseaux sociaux (Onglets) */}
+      <div className="space-y-2">
+        <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">Réseau social cible</label>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {PLATFORMS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setPlatform(p.id)}
+              className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all border ${
+                platform === p.id
+                  ? 'bg-stone-900 text-amber-200 border-stone-900 shadow'
+                  : 'bg-[#F4EFE6] text-stone-700 border-[#E2D5C3] hover:bg-[#E8DFC9]'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
         </div>
       </div>
 
+      {/* Brief */}
       <section className="space-y-2">
-        <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">Brief</label>
+        <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">Brief éditorial</label>
         <textarea
           rows={3}
           value={form.brief}
@@ -191,19 +233,86 @@ export default function PostEditor({
         />
       </section>
 
+      {/* SECTION SPÉCIFIQUE CARROUSEL : Slides */}
+      {isCarrousel && (
+        <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold uppercase tracking-wider text-stone-800">Gestion des Slides du Carrousel</label>
+            {!readOnly && (
+              <button onClick={addSlide} type="button" className="px-3 py-1 bg-stone-900 text-amber-200 text-xs font-bold rounded-lg">
+                + Ajouter un slide
+              </button>
+            )}
+          </div>
+          {form.slides.map((slideText, idx) => (
+            <div key={idx} className="flex gap-2 items-center">
+              <span className="text-xs font-bold text-stone-500 w-16">Slide {idx + 1}</span>
+              <input
+                type="text"
+                value={slideText}
+                disabled={readOnly}
+                onChange={(e) => updateSlide(idx, e.target.value)}
+                placeholder={`Contenu du slide ${idx + 1}...`}
+                className={inputClass}
+              />
+              {!readOnly && form.slides.length > 1 && (
+                <button onClick={() => removeSlide(idx)} type="button" className="text-red-600 font-bold px-2 hover:bg-red-50 rounded">
+                  ✕
+                </button>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
+
+      {/* SECTION SPÉCIFIQUE VIDÉOS : Script & Téléchargement Word / PDF */}
+      {isVideo && (
+        <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <label className="text-xs font-bold uppercase tracking-wider text-stone-800">Script de la vidéo (À lire)</label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => downloadScript('pdf')}
+                className="px-3 py-1.5 bg-red-700 text-white text-xs font-bold rounded-xl shadow hover:bg-red-800"
+              >
+                📥 Télécharger PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadScript('docx')}
+                className="px-3 py-1.5 bg-blue-700 text-white text-xs font-bold rounded-xl shadow hover:bg-blue-800"
+              >
+                📥 Télécharger Word
+              </button>
+            </div>
+          </div>
+          <textarea
+            rows={5}
+            value={form.script}
+            disabled={readOnly}
+            onChange={(e) => set('script', e.target.value)}
+            placeholder="Rédigez ou générez le script complet de la vidéo ici..."
+            className={inputClass}
+          />
+        </section>
+      )}
+
+      {/* Légende */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">Légende à publier</label>
           <button
             onClick={onGenerateCaption}
             disabled={busy || readOnly}
+            type="button"
             className="bg-gold-600 hover:bg-gold-700 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow disabled:opacity-50"
           >
-            Générer avec Claude
+            Générer avec Claude 🤖
           </button>
         </div>
         <textarea
-          rows={6}
+          rows={5}
           value={form.caption}
           disabled={readOnly}
           maxLength={2200}
@@ -213,20 +322,25 @@ export default function PostEditor({
         <span className="text-[10px] text-stone-500">{form.caption.length} / 2200 caractères</span>
       </section>
 
+      {/* Prompt Image ou Prompt Miniature selon le format */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
-          <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">Prompt image</label>
+          <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
+            {isVideo ? 'Prompt Miniature' : 'Prompt Image'}
+          </label>
           <div className="flex gap-2">
             <button
               onClick={onGeneratePrompt}
               disabled={busy || readOnly}
+              type="button"
               className="bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-[#E8DFC9] disabled:opacity-50"
             >
-              Suggérer
+              Suggérer 💡
             </button>
             <button
-              onClick={onCopyPrompt}
-              disabled={!form.image_prompt}
+              onClick={() => onCopyText(isVideo ? form.thumbnail_prompt : form.image_prompt, isVideo ? 'Prompt miniature' : 'Prompt image')}
+              disabled={!(isVideo ? form.thumbnail_prompt : form.image_prompt)}
+              type="button"
               className="bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-[#E8DFC9] disabled:opacity-50"
             >
               Copier
@@ -235,14 +349,16 @@ export default function PostEditor({
         </div>
         <textarea
           rows={3}
-          value={form.image_prompt}
+          value={isVideo ? form.thumbnail_prompt : form.image_prompt}
           disabled={readOnly}
           maxLength={1000}
-          onChange={(e) => set('image_prompt', e.target.value)}
+          onChange={(e) => set(isVideo ? 'thumbnail_prompt' : 'image_prompt', e.target.value)}
+          placeholder={isVideo ? "Description détaillée pour la miniature de la vidéo..." : "Description visuelle pour la génération d'image..."}
           className={`${inputClass} font-mono`}
         />
       </section>
 
+      {/* Tags */}
       <section className="space-y-2">
         <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
           Tags ({form.tags.length} / {MAX_TAGS})
@@ -252,9 +368,7 @@ export default function PostEditor({
             <span key={tag} className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-200">
               {tag}
               {!readOnly && (
-                <button onClick={() => removeTag(tag)} className="text-amber-700 hover:text-red-600" aria-label={`Retirer ${tag}`}>
-                  ×
-                </button>
+                <button onClick={() => removeTag(tag)} type="button" className="text-amber-700 hover:text-red-600">×</button>
               )}
             </span>
           ))}
@@ -266,6 +380,7 @@ export default function PostEditor({
                 <button
                   key={t}
                   onClick={() => addTag(t)}
+                  type="button"
                   className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-[#F4EFE6] border border-[#E2D5C3] text-stone-700 hover:bg-[#E8DFC9]"
                 >
                   + {t}
@@ -283,16 +398,17 @@ export default function PostEditor({
                   setTagInput('');
                 }
               }}
-              placeholder="Ajouter un tag puis Entrée (lettres, chiffres, _ . -)"
+              placeholder="Ajouter un tag puis Entrée..."
               className="w-full bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-2.5 text-xs text-stone-900 focus:outline-none focus:border-gold-500"
             />
           </>
         )}
       </section>
 
+      {/* Premier commentaire */}
       <section className="space-y-2">
         <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
-          Commentaire publié sous le post (au moment de la publication)
+          Premier commentaire sous le post
         </label>
         <textarea
           rows={2}
@@ -303,17 +419,14 @@ export default function PostEditor({
           placeholder="Ex. : Dites-moi en commentaire si ce sujet résonne avec vous ✨"
           className={inputClass}
         />
-        <span className="text-[10px] text-stone-500">
-          Sur TikTok, ce commentaire devra être publié à la main : l'API ne le permet pas.
-        </span>
       </section>
 
+      {/* Actions de planification et publication */}
       {!readOnly && (
         <section className="border-t border-[#E2D5C3] pt-4 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
           <div className="space-y-2">
             <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
-              Date de programmation
-              {ownerTimezone && <span className="normal-case font-normal text-stone-500"> (fuseau du propriétaire : {ownerTimezone})</span>}
+              Date de programmation ({ownerTimezone || 'Europe/Paris'})
             </label>
             <input
               type="datetime-local"
@@ -321,64 +434,33 @@ export default function PostEditor({
               onChange={(e) => setScheduleAt(e.target.value)}
               className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-2.5 text-xs font-bold text-stone-800 focus:outline-none"
             />
-            {post.status === 'programme' && post.scheduled_at && (
-              <p className="text-[11px] text-amber-800">
-                Programmé le {new Date(post.scheduled_at).toLocaleString('fr-FR', { timeZone: ownerTimezone || undefined })}
-              </p>
-            )}
           </div>
 
           <div className="flex flex-wrap gap-2 justify-end">
             {canDelete && (
-              <button
-                onClick={onDelete}
-                disabled={busy}
-                className="px-5 py-2.5 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-bold hover:bg-red-100 disabled:opacity-50"
-              >
+              <button onClick={onDelete} disabled={busy} type="button" className="px-5 py-2.5 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-bold">
                 Supprimer
               </button>
             )}
-            <button
-              onClick={onSave}
-              disabled={busy}
-              className="px-5 py-2.5 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold hover:bg-[#E8DFC9] disabled:opacity-50"
-            >
+            <button onClick={onSave} disabled={busy} type="button" className="px-5 py-2.5 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold">
               Enregistrer
             </button>
             {post.status === 'programme' ? (
-              <button
-                onClick={onCancelSchedule}
-                disabled={busy}
-                className="px-5 py-2.5 rounded-xl bg-red-100 text-red-700 text-xs font-bold hover:bg-red-200 disabled:opacity-50"
-              >
-                Annuler la programmation
+              <button onClick={onCancelSchedule} disabled={busy} type="button" className="px-5 py-2.5 rounded-xl bg-red-100 text-red-700 text-xs font-bold">
+                Annuler programmation
               </button>
             ) : (
               <>
-                <button
-                  onClick={onPublishNow}
-                  disabled={busy}
-                  className="px-5 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow disabled:opacity-50"
-                >
+                <button onClick={onPublishNow} disabled={busy} type="button" className="px-5 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow">
                   Publier maintenant
                 </button>
-                <button
-                  onClick={onSchedule}
-                  disabled={busy}
-                  className="px-5 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow disabled:opacity-50"
-                >
+                <button onClick={onSchedule} disabled={busy} type="button" className="px-5 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow">
                   Programmer
                 </button>
               </>
             )}
           </div>
         </section>
-      )}
-
-      {readOnly && canDelete === false && post.is_adhoc && (
-        <p className="text-[11px] text-stone-500 border-t border-[#E2D5C3] pt-4">
-          Cette publication est déjà publiée : elle ne peut plus être modifiée ni supprimée.
-        </p>
       )}
     </div>
   );
