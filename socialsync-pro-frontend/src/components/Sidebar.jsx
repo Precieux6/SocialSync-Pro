@@ -73,10 +73,9 @@ export default function Sidebar({
             <div className="w-10 h-10 rounded-xl overflow-hidden bg-stone-900 flex items-center justify-center border border-gold-400 shadow shrink-0">
               <img 
                 src="/logo.png" 
-                alt="SocialSync Pro" 
+                alt="SocialSync Pro Logo" 
                 className="w-full h-full object-cover"
                 onError={(e) => {
-                  // Fallback automatique si l'image n'est pas trouvée, affiche les initiales SSP sans bloquer Vercel
                   e.target.style.display = 'none';
                   if (e.currentTarget.parentElement) {
                     e.currentTarget.parentElement.innerHTML = '<span class="text-amber-200 font-serif font-bold text-xs">SSP</span>';
@@ -90,7 +89,8 @@ export default function Sidebar({
             </div>
           </button>
 
-          <div className="p-3.5 rounded-2xl bg-stone-900 text-amber-200 flex items-center gap-3">
+          {/* Encadré Espace avec le libellé correct et le nom de l'utilisateur sur la deuxième ligne */}
+          <div className="p-3.5 rounded-2xl bg-stone-900 text-amber-200 flex items-center gap-3 shadow-lg">
             <OwnerAvatar src={ownerAvatar} name={ownerName} />
             <div className="min-w-0">
               <span className="text-[10px] uppercase font-bold tracking-wider block opacity-75">
