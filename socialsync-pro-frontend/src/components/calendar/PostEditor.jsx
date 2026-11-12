@@ -87,7 +87,7 @@ export default function PostEditor({
   // Upload d'images multiples (jusqu'à 10)
   const handleImageUpload = async (e) => {
     const files = Array.from(e.target.files || []);
-    if.target = '';
+    e.target.value = '';
     if (files.length === 0) return;
 
     if (form.media_urls.length + files.length > 10) {
@@ -283,7 +283,7 @@ export default function PostEditor({
         />
       </section>
 
-      {/* SECTION TÉLÉVERSEMENT MÉDIAS / FICHIERS (Images ou Vidéos selon le format) */}
+      {/* SECTION TÉLÉVERSEMENT MÉDIAS / FICHIERS */}
       {!isVideo ? (
         <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
           <div className="flex items-center justify-between">
@@ -518,7 +518,7 @@ export default function PostEditor({
         />
       </section>
 
-      {/* Actions de programmation alignées parfaitement sur la même ligne */}
+      {/* Actions de programmation */}
       {!readOnly && (
         <section className="border-t border-[#E2D5C3] pt-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
           <div className="space-y-1">
