@@ -274,16 +274,20 @@ export default function CalendarPage({ notify }) {
       ))}
 
       {selected && (
-        <PostEditor
-          key={selected.id}
-          post={selected}
-          themeTitle={selectedTheme}
-          ownerTimezone={timezone}
-          onUpdated={onPostUpdated}
-          onDeleted={onPostDeleted}
-          onClose={() => setSelectedId(null)}
-          notify={notify}
-        />
+        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <PostEditor
+              key={selected.id}
+              post={selected}
+              themeTitle={selectedTheme}
+              ownerTimezone={timezone}
+              onUpdated={onPostUpdated}
+              onDeleted={onPostDeleted}
+              onClose={() => setSelectedId(null)}
+              notify={notify}
+            />
+          </div>
+        </div>
       )}
 
       {adding && (
