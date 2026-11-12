@@ -56,7 +56,7 @@ export default function PostEditor({
     toLocalInputValue(new Date(Date.now() + 60 * 60 * 1000), ownerTimezone || 'Europe/Paris')
   );
   const [busy, setBusy] = useState(false);
-  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [, setUploadingMedia] = useState(false);
 
   const readOnly = post.status === 'publie';
   const canDelete = post.is_adhoc && !readOnly;
@@ -84,7 +84,7 @@ export default function PostEditor({
     set('slides', form.slides.filter((_, i) => i !== index));
   };
 
-  // Upload d'images multiples (jusqu'à 10)
+  // Upload d'images multiples
   const handleImageUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
@@ -115,7 +115,7 @@ export default function PostEditor({
     set('media_urls', form.media_urls.filter((_, i) => i !== index));
   };
 
-  // Liaison vidéo depuis l'espace "À tourner" ou upload direct
+  // Liaison vidéo
   const handleVideoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -124,7 +124,7 @@ export default function PostEditor({
       const path = `posts/${post.id}/video_${Date.now()}`;
       const url = await uploadFile('videos', path, file);
       set('video_url', url);
-      notify('Vidéo synchronisée depuis l\'espace "À tourner".');
+      notify('Vidéo synchronisée.');
     } catch (err) {
       notify(err.message || 'Erreur lors du téléversement de la vidéo.');
     } finally {
@@ -289,7 +289,7 @@ export default function PostEditor({
           <div className="flex items-center justify-between">
             <div>
               <label className="text-xs font-bold uppercase tracking-wider text-stone-800 block">Médias associés (Images)</label>
-              <span className="text-[10px] text-stone-500">Formats acceptés : PNG, JPEG, JPG, WEBP (Max 10 fichiers)</span>
+              <span className="text-[10px] text-stone-500">Formats : PNG, JPEG, JPG, WEBP (Max 10)</span>
             </div>
             {!readOnly && form.media_urls.length < 10 && (
               <label className="px-3 py-1.5 bg-stone-900 text-amber-200 text-xs font-bold rounded-xl cursor-pointer shadow hover:bg-stone-800">
@@ -322,7 +322,7 @@ export default function PostEditor({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <label className="text-xs font-bold uppercase tracking-wider text-stone-800 block">
-                Vidéo associée (Espace « À tourner »)
+                Vidéo associée
               </label>
               <span className="text-[10px] text-stone-500">
                 {post.format === 'Vidéo courte' ? 'Format vertical 9:16 recommandé' : 'Format horizontal 16:9 recommandé'}
@@ -330,7 +330,7 @@ export default function PostEditor({
             </div>
             {!readOnly && (
               <label className="px-3 py-1.5 bg-stone-900 text-amber-200 text-xs font-bold rounded-xl cursor-pointer shadow hover:bg-stone-800">
-                🎬 Sélectionner depuis « À tourner » / Upload
+                🎬 Sélectionner / Upload
                 <input type="file" accept="video/*" className="hidden" onChange={handleVideoUpload} />
               </label>
             )}
@@ -343,7 +343,7 @@ export default function PostEditor({
               </a>
             </div>
           ) : (
-            <p className="text-xs text-stone-400 italic">Aucune vidéo liée pour le moment. Ajoutez-la depuis l'espace de tournage.</p>
+            <p className="text-xs text-stone-400 italic">Aucune vidéo liée pour le moment.</p>
           )}
         </section>
       )}
@@ -405,7 +405,7 @@ export default function PostEditor({
         </section>
       )}
 
-      {/* Légende avec bouton Copier à côté de Générer avec Claude */}
+      {/* Légende avec bouton Générer épuré et Copier */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">Légende à publier</label>
@@ -416,7 +416,7 @@ export default function PostEditor({
               type="button"
               className="bg-gold-600 hover:bg-gold-700 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow disabled:opacity-50"
             >
-              Générer avec Claude 🤖
+              Générer 🤖
             </button>
             <button
               onClick={() => onCopyText(form.caption, 'Légende')}
@@ -518,9 +518,9 @@ export default function PostEditor({
         />
       </section>
 
-      {/* Actions de programmation */}
+      {/* Actions de programmation alignées en une seule ligne horizontale rigoureuse */}
       {!readOnly && (
-        <section className="border-t border-[#E2D5C3] pt-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        <section className="border-t border-[#E2D5C3] pt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
               Date de programmation ({ownerTimezone || 'Europe/Paris'})
@@ -533,25 +533,25 @@ export default function PostEditor({
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 justify-end">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             {canDelete && (
-              <button onClick={onDelete} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-bold">
+              <button onClick={onDelete} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-bold whitespace-nowrap">
                 Supprimer
               </button>
             )}
-            <button onClick={onSave} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold hover:bg-[#E8DFC9]">
+            <button onClick={onSave} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold hover:bg-[#E8DFC9] whitespace-nowrap">
               Enregistrer
             </button>
             {post.status === 'programme' ? (
-              <button onClick={onCancelSchedule} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-red-100 text-red-700 text-xs font-bold">
+              <button onClick={onCancelSchedule} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-red-100 text-red-700 text-xs font-bold whitespace-nowrap">
                 Annuler programmation
               </button>
             ) : (
               <>
-                <button onClick={onPublishNow} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow hover:bg-emerald-800">
+                <button onClick={onPublishNow} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow hover:bg-emerald-800 whitespace-nowrap">
                   Publier maintenant
                 </button>
-                <button onClick={onSchedule} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow hover:bg-stone-800">
+                <button onClick={onSchedule} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow hover:bg-stone-800 whitespace-nowrap">
                   Programmer
                 </button>
               </>
