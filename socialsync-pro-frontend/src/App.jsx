@@ -147,7 +147,7 @@ export default function App() {
         onNavigate={setTab}
         isOwner={isOwner}
         isOwnSpace={isOwnSpace}
-        ownerName={ownerName}
+        ownerName={ownerName && ownerName !== 'ESPACE PARTAGÉ' ? ownerName : 'Précieux Trésor TOSSOU'}
         ownerAvatar={ownerAvatar}
         ownerBio={ownerBio}
         roleLabel={userRole}
