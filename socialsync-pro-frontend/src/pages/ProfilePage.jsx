@@ -27,14 +27,14 @@ export default function ProfilePage({ notify }) {
   const [dangerBusy, setDangerBusy] = useState(false);
 
   useEffect(() => {
-    if (!myProfile) return;
+    if (!myProfile && !user) return;
     setForm({
-      name: myProfile.name || '',
-      bio: myProfile.bio || '',
-      avatar: myProfile.avatar || '',
-      timezone: myProfile.timezone || 'Europe/Paris',
+      name: myProfile?.name || user?.user_metadata?.name || user?.user_metadata?.full_name || '',
+      bio: myProfile?.bio || '',
+      avatar: myProfile?.avatar || user?.user_metadata?.avatar_url || '',
+      timezone: myProfile?.timezone || 'Europe/Paris',
     });
-  }, [myProfile]);
+  }, [myProfile, user]);
 
   const loadSettings = async () => {
     if (!isOwner) return;
@@ -83,7 +83,15 @@ export default function ProfilePage({ notify }) {
   const saveProfile = async () => {
     setSaving(true);
     try {
-      await api.profile.update(form);
+      // On envoie à la fois 'name' et 'full_name' pour parer à toute attente du backend
+      const payload = {
+        name: form.name,
+        full_name: form.name,
+        bio: form.bio,
+        avatar: form.avatar,
+        timezone: form.timezone,
+      };
+      await api.profile.update(payload);
       if (refreshProfiles) await refreshProfiles();
       if (notify) notify('Profil enregistré.');
     } catch (e) {
@@ -145,8 +153,6 @@ export default function ProfilePage({ notify }) {
     }
   };
 
-  // Correction : si myProfile met du temps à se charger mais que l'utilisateur est bien connecté, 
-  // on affiche un formulaire pré-rempli à partir des métadonnées de l'utilisateur plutôt qu'un blocage figé.
   const profileData = myProfile || {
     name: user?.user_metadata?.name || '',
     email: user?.email || '',
