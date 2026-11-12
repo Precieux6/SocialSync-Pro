@@ -1,6 +1,6 @@
 // socialsync-pro-frontend/src/components/calendar/PostEditor.jsx
 import React, { useState } from 'react';
-import { api } from '../../services/api';
+import { api, uploadFile } from '../../services/api';
 
 const PLATFORMS = [
   { id: 'instagram', label: 'Instagram' },
@@ -11,6 +11,7 @@ const PLATFORMS = [
 
 const SUGGESTED_TAGS = ['@followers', '@everyone'];
 const MAX_TAGS = 30;
+const ACCEPTED_IMAGE_TYPES = 'image/png, image/jpeg, image/jpg, image/webp';
 
 const toForm = (post) => ({
   brief: post.brief || '',
@@ -19,11 +20,12 @@ const toForm = (post) => ({
   thumbnail_prompt: post.thumbnail_prompt || '',
   script: post.script || '',
   slides: post.slides || [''],
+  media_urls: post.media_urls || [],
+  video_url: post.video_url || '',
   tags: post.tags || [],
   first_comment: post.first_comment || '',
 });
 
-// Valeur « AAAA-MM-JJTHH:mm » d'un instant dans le fuseau donné
 const toLocalInputValue = (date, tz) => {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
@@ -54,6 +56,7 @@ export default function PostEditor({
     toLocalInputValue(new Date(Date.now() + 60 * 60 * 1000), ownerTimezone || 'Europe/Paris')
   );
   const [busy, setBusy] = useState(false);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
 
   const readOnly = post.status === 'publie';
   const canDelete = post.is_adhoc && !readOnly;
@@ -70,7 +73,7 @@ export default function PostEditor({
 
   const removeTag = (tag) => set('tags', form.tags.filter((t) => t !== tag));
 
-  // Gestion des slides pour le carrousel
+  // Gestion des slides
   const addSlide = () => set('slides', [...form.slides, '']);
   const updateSlide = (index, value) => {
     const newSlides = [...form.slides];
@@ -81,14 +84,61 @@ export default function PostEditor({
     set('slides', form.slides.filter((_, i) => i !== index));
   };
 
-  // Téléchargement du script au format texte brut simulant Word/PDF
+  // Upload d'images multiples (jusqu'à 10)
+  const handleImageUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if.target = '';
+    if (files.length === 0) return;
+
+    if (form.media_urls.length + files.length > 10) {
+      notify('Vous pouvez téléverser un maximum de 10 fichiers images.');
+      return;
+    }
+
+    setUploadingMedia(true);
+    try {
+      const uploadPromises = files.map(async (file, idx) => {
+        const path = `posts/${post.id}/media_${Date.now()}_${idx}`;
+        return await uploadFile('media', path, file);
+      });
+      const urls = await Promise.all(uploadPromises);
+      set('media_urls', [...form.media_urls, ...urls]);
+      notify('Images ajoutées avec succès.');
+    } catch (err) {
+      notify(err.message || 'Erreur lors du téléversement des images.');
+    } finally {
+      setUploadingMedia(false);
+    }
+  };
+
+  const removeMedia = (index) => {
+    set('media_urls', form.media_urls.filter((_, i) => i !== index));
+  };
+
+  // Liaison vidéo depuis l'espace "À tourner" ou upload direct
+  const handleVideoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingMedia(true);
+    try {
+      const path = `posts/${post.id}/video_${Date.now()}`;
+      const url = await uploadFile('videos', path, file);
+      set('video_url', url);
+      notify('Vidéo synchronisée depuis l\'espace "À tourner".');
+    } catch (err) {
+      notify(err.message || 'Erreur lors du téléversement de la vidéo.');
+    } finally {
+      setUploadingMedia(false);
+    }
+  };
+
   const downloadScript = (format) => {
     const content = `TITRE DU POST : ${post.format} (${post.post_date})\nTHÈME : ${themeTitle}\n\nSCRIPT :\n${form.script || 'Aucun script rédigé.'}`;
-    const blob = new Blob([content], { type: format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    const blob = new Blob([content], { type: format === 'pdf' ? 'application/pdf' : 'application/msword' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `script-post-${post.id}.${format === 'pdf' ? 'pdf' : 'docx'}`;
+    a.download = `script-post-${post.id}.${format}`;
     a.click();
     URL.revokeObjectURL(url);
     notify(`Script téléchargé au format ${format.toUpperCase()}`);
@@ -121,17 +171,7 @@ export default function PostEditor({
     withBusy(async () => {
       const r = await api.ai.caption(form.brief.trim() || post.format, themeTitle, platform);
       set('caption', r.caption || '');
-      notify("Légende générée.");
-    });
-
-  const onGeneratePrompt = () =>
-    withBusy(async () => {
-      const r = await api.ai.prompt(themeTitle, platform);
-      if (isVideo) {
-        set('thumbnail_prompt', r.prompt || '');
-      } else {
-        set('image_prompt', r.prompt || '');
-      }
+      notify('Légende générée.');
     });
 
   const onCopyText = async (text, label) => {
@@ -142,6 +182,16 @@ export default function PostEditor({
       notify('Copie impossible.');
     }
   };
+
+  const onGeneratePrompt = () =>
+    withBusy(async () => {
+      const r = await api.ai.prompt(themeTitle, platform);
+      if (isVideo) {
+        set('thumbnail_prompt', r.prompt || '');
+      } else {
+        set('image_prompt', r.prompt || '');
+      }
+    });
 
   const onSchedule = () =>
     withBusy(async () => {
@@ -193,12 +243,12 @@ export default function PostEditor({
           </h3>
           <p className="text-xs text-stone-500">Thème : {themeTitle}</p>
         </div>
-        <button onClick={onClose} className="text-xs font-bold text-stone-600 hover:text-stone-900 px-4 py-2 bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl">
+        <button onClick={onClose} type="button" className="text-xs font-bold text-stone-600 hover:text-stone-900 px-4 py-2 bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl">
           Fermer ✕
         </button>
       </div>
 
-      {/* Alignement horizontal des 4 réseaux sociaux (Onglets) */}
+      {/* Onglets horizontaux des réseaux sociaux */}
       <div className="space-y-2">
         <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">Réseau social cible</label>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -233,11 +283,76 @@ export default function PostEditor({
         />
       </section>
 
-      {/* SECTION CARROUSEL : Slides */}
+      {/* SECTION TÉLÉVERSEMENT MÉDIAS / FICHIERS (Images ou Vidéos selon le format) */}
+      {!isVideo ? (
+        <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-xs font-bold uppercase tracking-wider text-stone-800 block">Médias associés (Images)</label>
+              <span className="text-[10px] text-stone-500">Formats acceptés : PNG, JPEG, JPG, WEBP (Max 10 fichiers)</span>
+            </div>
+            {!readOnly && form.media_urls.length < 10 && (
+              <label className="px-3 py-1.5 bg-stone-900 text-amber-200 text-xs font-bold rounded-xl cursor-pointer shadow hover:bg-stone-800">
+                📁 Ajouter des images
+                <input type="file" multiple accept={ACCEPTED_IMAGE_TYPES} className="hidden" onChange={handleImageUpload} />
+              </label>
+            )}
+          </div>
+          {form.media_urls.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2">
+              {form.media_urls.map((url, idx) => (
+                <div key={idx} className="relative group rounded-xl overflow-hidden border border-[#E2D5C3] bg-white h-20">
+                  <img src={url} alt={`Media ${idx + 1}`} className="w-full h-full object-cover" />
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      onClick={() => removeMedia(idx)}
+                      className="absolute top-1 right-1 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] opacity-80 hover:opacity-100"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : (
+        <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <label className="text-xs font-bold uppercase tracking-wider text-stone-800 block">
+                Vidéo associée (Espace « À tourner »)
+              </label>
+              <span className="text-[10px] text-stone-500">
+                {post.format === 'Vidéo courte' ? 'Format vertical 9:16 recommandé' : 'Format horizontal 16:9 recommandé'}
+              </span>
+            </div>
+            {!readOnly && (
+              <label className="px-3 py-1.5 bg-stone-900 text-amber-200 text-xs font-bold rounded-xl cursor-pointer shadow hover:bg-stone-800">
+                🎬 Sélectionner depuis « À tourner » / Upload
+                <input type="file" accept="video/*" className="hidden" onChange={handleVideoUpload} />
+              </label>
+            )}
+          </div>
+          {form.video_url ? (
+            <div className="p-3 bg-white rounded-xl border border-[#E2D5C3] flex items-center justify-between">
+              <span className="text-xs font-semibold text-stone-800 truncate max-w-xs">📹 {form.video_url.split('/').pop()}</span>
+              <a href={form.video_url} target="_blank" rel="noreferrer" className="text-xs font-bold text-gold-700 hover:underline">
+                Prévisualiser
+              </a>
+            </div>
+          ) : (
+            <p className="text-xs text-stone-400 italic">Aucune vidéo liée pour le moment. Ajoutez-la depuis l'espace de tournage.</p>
+          )}
+        </section>
+      )}
+
+      {/* SECTION SLIDES POUR CARROUSEL */}
       {isCarrousel && (
         <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
           <div className="flex items-center justify-between">
-            <label className="text-xs font-bold uppercase tracking-wider text-stone-800">Gestion des Slides du Carrousel</label>
+            <label className="text-xs font-bold uppercase tracking-wider text-stone-800">Slides du Carrousel</label>
             {!readOnly && (
               <button onClick={addSlide} type="button" className="px-3 py-1 bg-stone-900 text-amber-200 text-xs font-bold rounded-lg">
                 + Ajouter un slide
@@ -265,51 +380,53 @@ export default function PostEditor({
         </section>
       )}
 
-      {/* SECTION VIDÉOS : Script & Téléchargement Word / PDF */}
+      {/* SECTION SCRIPT POUR VIDÉOS */}
       {isVideo && (
         <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <label className="text-xs font-bold uppercase tracking-wider text-stone-800">Script de la vidéo (À lire)</label>
             <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => downloadScript('pdf')}
-                className="px-3 py-1.5 bg-red-700 text-white text-xs font-bold rounded-xl shadow hover:bg-red-800"
-              >
-                📥 Télécharger PDF
+              <button type="button" onClick={() => downloadScript('pdf')} className="px-3 py-1.5 bg-red-700 text-white text-xs font-bold rounded-xl shadow hover:bg-red-800">
+                📥 PDF
               </button>
-              <button
-                type="button"
-                onClick={() => downloadScript('docx')}
-                className="px-3 py-1.5 bg-blue-700 text-white text-xs font-bold rounded-xl shadow hover:bg-blue-800"
-              >
-                📥 Télécharger Word
+              <button type="button" onClick={() => downloadScript('docx')} className="px-3 py-1.5 bg-blue-700 text-white text-xs font-bold rounded-xl shadow hover:bg-blue-800">
+                📥 Word
               </button>
             </div>
           </div>
           <textarea
-            rows={5}
+            rows={4}
             value={form.script}
             disabled={readOnly}
             onChange={(e) => set('script', e.target.value)}
-            placeholder="Rédigez ou générez le script complet de la vidéo ici..."
+            placeholder="Rédigez ou générez le script complet..."
             className={inputClass}
           />
         </section>
       )}
 
-      {/* Légende */}
+      {/* Légende avec bouton Copier à côté de Générer avec Claude */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">Légende à publier</label>
-          <button
-            onClick={onGenerateCaption}
-            disabled={busy || readOnly}
-            type="button"
-            className="bg-gold-600 hover:bg-gold-700 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow disabled:opacity-50"
-          >
-            Générer avec Claude 🤖
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={onGenerateCaption}
+              disabled={busy || readOnly}
+              type="button"
+              className="bg-gold-600 hover:bg-gold-700 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow disabled:opacity-50"
+            >
+              Générer avec Claude 🤖
+            </button>
+            <button
+              onClick={() => onCopyText(form.caption, 'Légende')}
+              disabled={!form.caption}
+              type="button"
+              className="bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-[#E8DFC9] disabled:opacity-50"
+            >
+              Copier
+            </button>
+          </div>
         </div>
         <textarea
           rows={5}
@@ -322,27 +439,17 @@ export default function PostEditor({
         <span className="text-[10px] text-stone-500">{form.caption.length} / 2200 caractères</span>
       </section>
 
-      {/* Prompt Image ou Miniature */}
+      {/* Prompt Image / Miniature */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
             {isVideo ? 'Prompt Miniature' : 'Prompt Image'}
           </label>
           <div className="flex gap-2">
-            <button
-              onClick={onGeneratePrompt}
-              disabled={busy || readOnly}
-              type="button"
-              className="bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-[#E8DFC9] disabled:opacity-50"
-            >
+            <button onClick={onGeneratePrompt} disabled={busy || readOnly} type="button" className="bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-[#E8DFC9]">
               Suggérer 💡
             </button>
-            <button
-              onClick={() => onCopyText(isVideo ? form.thumbnail_prompt : form.image_prompt, isVideo ? 'Prompt miniature' : 'Prompt image')}
-              disabled={!(isVideo ? form.thumbnail_prompt : form.image_prompt)}
-              type="button"
-              className="bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-[#E8DFC9] disabled:opacity-50"
-            >
+            <button onClick={() => onCopyText(isVideo ? form.thumbnail_prompt : form.image_prompt, 'Prompt')} disabled={!(isVideo ? form.thumbnail_prompt : form.image_prompt)} type="button" className="bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-[#E8DFC9]">
               Copier
             </button>
           </div>
@@ -353,7 +460,6 @@ export default function PostEditor({
           disabled={readOnly}
           maxLength={1000}
           onChange={(e) => set(isVideo ? 'thumbnail_prompt' : 'image_prompt', e.target.value)}
-          placeholder={isVideo ? "Description détaillée pour la miniature..." : "Description visuelle pour l'image..."}
           className={`${inputClass} font-mono`}
         />
       </section>
@@ -367,22 +473,15 @@ export default function PostEditor({
           {form.tags.map((tag) => (
             <span key={tag} className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-200">
               {tag}
-              {!readOnly && (
-                <button onClick={() => removeTag(tag)} type="button" className="text-amber-700 hover:text-red-600">×</button>
-              )}
+              {!readOnly && <button onClick={() => removeTag(tag)} type="button" className="text-amber-700 hover:text-red-600">×</button>}
             </span>
           ))}
         </div>
         {!readOnly && (
-          <>
+          <div className="space-y-2">
             <div className="flex flex-wrap gap-2">
               {SUGGESTED_TAGS.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => addTag(t)}
-                  type="button"
-                  className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-[#F4EFE6] border border-[#E2D5C3] text-stone-700 hover:bg-[#E8DFC9]"
-                >
+                <button key={t} onClick={() => addTag(t)} type="button" className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-[#F4EFE6] border border-[#E2D5C3] text-stone-700 hover:bg-[#E8DFC9]">
                   + {t}
                 </button>
               ))}
@@ -399,17 +498,15 @@ export default function PostEditor({
                 }
               }}
               placeholder="Ajouter un tag puis Entrée..."
-              className="w-full bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-2.5 text-xs text-stone-900 focus:outline-none focus:border-gold-500"
+              className={inputClass}
             />
-          </>
+          </div>
         )}
       </section>
 
       {/* Premier commentaire */}
       <section className="space-y-2">
-        <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
-          Premier commentaire sous le post
-        </label>
+        <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">Premier commentaire sous le post</label>
         <textarea
           rows={2}
           value={form.first_comment}
@@ -421,22 +518,22 @@ export default function PostEditor({
         />
       </section>
 
-      {/* SECTION DU BAS PARFAITEMENT ALIGNÉE SUR UNE SEULE LIGNE */}
+      {/* Actions de programmation alignées parfaitement sur la même ligne */}
       {!readOnly && (
-        <section className="border-t border-[#E2D5C3] pt-4 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex flex-col gap-1 min-w-[220px]">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-stone-600">
-              Programmation ({ownerTimezone || 'Europe/Paris'})
+        <section className="border-t border-[#E2D5C3] pt-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
+              Date de programmation ({ownerTimezone || 'Europe/Paris'})
             </label>
             <input
               type="datetime-local"
               value={scheduleAt}
               onChange={(e) => setScheduleAt(e.target.value)}
-              className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-2 text-xs font-bold text-stone-800 focus:outline-none"
+              className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-2.5 text-xs font-bold text-stone-800 focus:outline-none"
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 justify-end">
             {canDelete && (
               <button onClick={onDelete} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-bold">
                 Supprimer
@@ -447,12 +544,12 @@ export default function PostEditor({
             </button>
             {post.status === 'programme' ? (
               <button onClick={onCancelSchedule} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-red-100 text-red-700 text-xs font-bold">
-                Annuler
+                Annuler programmation
               </button>
             ) : (
               <>
                 <button onClick={onPublishNow} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow hover:bg-emerald-800">
-                  Publier
+                  Publier maintenant
                 </button>
                 <button onClick={onSchedule} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow hover:bg-stone-800">
                   Programmer
