@@ -44,7 +44,6 @@ export function AuthProvider({ children }) {
   }, []);
 
   const loadSpaces = useCallback(async (user) => {
-    // 1. On s'assure d'attendre l'acceptation des invitations en attente pour les lier immédiatement au compte
     try {
       await api.team.acceptInvitations();
     } catch (err) {
@@ -76,8 +75,8 @@ export function AuthProvider({ children }) {
       const saved = getActiveSpaceId();
       let chosen = list.find((s) => s.ownerId === saved);
 
-      // Si l'utilisateur vient d'accepter une invitation et n'a pas encore d'espace actif sauvegardé,
-      // on bascule par défaut sur le premier espace partagé s'il existe pour lui éviter d'atterrir sur "Mon espace" vide.
+      // Si l'utilisateur est un invité sans espace explicitement sauvegardé, 
+      // on bascule automatiquement sur le premier espace partagé (list[1]) au lieu de "Mon espace" (list[0])
       if (!chosen) {
         chosen = list.length > 1 ? list[1] : list[0];
       }
@@ -164,7 +163,10 @@ export function AuthProvider({ children }) {
   };
 
   const isOwner = activeSpace?.role === 'Propriétaire';
-  const isOwnSpace = Boolean(session && activeSpace && activeSpace.ownerId === session.user.id);
+  
+  // Correction clé : Un espace n'est "propre" que si l'utilisateur est propriétaire ET qu'il regarde son propre espace
+  const isOwnSpace = Boolean(session && activeSpace && activeSpace.ownerId === session.user.id && isOwner);
+  
   const ownerName = ownerProfile?.name || ownerProfile?.email || activeSpace?.ownerName || '';
 
   return (
