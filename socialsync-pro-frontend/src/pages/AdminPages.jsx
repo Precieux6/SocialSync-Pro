@@ -11,51 +11,66 @@ export function TeamPage({ notify }) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('Éditeur');
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     const [m, i] = await Promise.all([api.team.members(), api.team.invitations()]);
-    setMembers(m.members);
-    setInvitations(i.invitations);
+    setMembers(m.members ?? []);
+    setInvitations(i.invitations ?? []);
   }, []);
 
   useEffect(() => {
-    load().catch((e) => notify(e.message));
+    load()
+      .catch((e) => notify(e.message))
+      .finally(() => setLoading(false));
   }, [load, notify]);
 
-  const invite = async (e) => {
-    e.preventDefault();
+  // Une action à la fois : boutons désactivés pendant l'appel, rechargement de la liste ensuite
+  const run = async (fn, message) => {
+    if (busy) return false;
     setBusy(true);
     try {
-      const r = await api.team.invite(email.trim(), role);
-      notify(r.email?.sent ? `Invitation envoyée à ${email}.` : `Invitation créée. ${r.email?.reason || ''}`);
-      setEmail('');
+      const r = await fn();
+      notify(typeof message === 'function' ? message(r) : message);
       await load();
+      return true;
     } catch (err) {
       notify(err.message);
+      return false;
     } finally {
       setBusy(false);
     }
   };
 
-  const changeRole = async (userId, newRole) => {
-    try {
-      await api.team.setMemberRole(userId, newRole);
-      notify('Rôle mis à jour.');
-      await load();
-    } catch (err) {
-      notify(err.message);
-    }
+  const invite = async (e) => {
+    e.preventDefault();
+    const target = email.trim();
+    const ok = await run(
+      () => api.team.invite(target, role),
+      (r) => (r.email?.sent
+        ? `Invitation envoyée à ${target}.`
+        : `Invitation enregistrée pour ${target}. ${r.email?.reason || ''}`.trim())
+    );
+    if (ok) setEmail('');
   };
 
-  const removeMember = async (userId, name) => {
+  const changeRole = (userId, newRole) =>
+    run(() => api.team.setMemberRole(userId, newRole), 'Rôle mis à jour.');
+
+  const removeMember = (userId, name) => {
     if (!window.confirm(`Retirer ${name} de l'équipe ?`)) return;
-    try {
-      await api.team.removeMember(userId);
-      notify(`${name} a été retiré.`);
-      await load();
-    } catch (err) {
-      notify(err.message);
-    }
+    run(() => api.team.removeMember(userId), `${name} a été retiré.`);
+  };
+
+  const resend = (id) =>
+    run(
+      () => api.team.resendInvitation(id),
+      (r) => (r.email?.sent ? 'Invitation renvoyée.' : (r.email?.reason || 'Renvoi impossible.'))
+    );
+
+  const deleteInvitation = (id, address) => {
+    if (!window.confirm(`Supprimer l'invitation envoyée à ${address} ?`)) return;
+    run(() => api.team.deleteInvitation(id), 'Invitation supprimée.');
   };
 
   const pending = invitations.filter((i) => !i.accepted_at);
@@ -78,11 +93,19 @@ export function TeamPage({ notify }) {
             onChange={(e) => setEmail(e.target.value)}
             className="sm:col-span-2 bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-3 text-xs text-stone-900 focus:outline-none"
           />
-          <select value={role} onChange={(e) => setRole(e.target.value)} className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-3 text-xs text-gold-700 font-bold focus:outline-none">
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-3 text-xs text-gold-700 font-bold focus:outline-none"
+          >
             {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
-        <button type="submit" disabled={busy} className="bg-stone-900 text-amber-200 text-xs font-bold px-5 py-2.5 rounded-xl shadow disabled:opacity-50">
+        <button
+          type="submit"
+          disabled={busy}
+          className="bg-stone-900 text-amber-200 text-xs font-bold px-5 py-2.5 rounded-xl shadow disabled:opacity-50"
+        >
           {busy ? 'Envoi...' : "Envoyer l'invitation"}
         </button>
       </form>
@@ -97,16 +120,28 @@ export function TeamPage({ notify }) {
                 <span className="text-[11px] text-stone-500">{m.email}</span>
               </div>
               <div className="flex items-center gap-3">
-                <select value={m.role} onChange={(e) => changeRole(m.user_id, e.target.value)} className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-lg px-3 py-1.5 font-bold text-gold-700">
+                <select
+                  value={m.role}
+                  disabled={busy}
+                  onChange={(e) => changeRole(m.user_id, e.target.value)}
+                  className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-lg px-3 py-1.5 font-bold text-gold-700 disabled:opacity-50"
+                >
                   {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>
-                <button onClick={() => removeMember(m.user_id, m.name || m.email)} className="text-stone-400 hover:text-red-600" title="Retirer">
+                <button
+                  disabled={busy}
+                  onClick={() => removeMember(m.user_id, m.name || m.email)}
+                  className="text-stone-400 hover:text-red-600 disabled:opacity-50"
+                  title="Retirer"
+                >
                   <i className="fa-regular fa-trash-can"></i>
                 </button>
               </div>
             </div>
           ))}
-          {members.length === 0 && <p className="py-3 text-xs text-stone-400">Aucun membre pour le moment.</p>}
+          {!loading && members.length === 0 && (
+            <p className="py-3 text-xs text-stone-400">Aucun membre pour le moment.</p>
+          )}
         </div>
       </div>
 
@@ -121,14 +156,16 @@ export function TeamPage({ notify }) {
               </div>
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => api.team.resendInvitation(i.id).then(() => notify('Invitation renvoyée.')).catch((e) => notify(e.message))}
-                  className="font-bold text-gold-700 hover:text-stone-900"
+                  disabled={busy}
+                  onClick={() => resend(i.id)}
+                  className="font-bold text-gold-700 hover:text-stone-900 disabled:opacity-50"
                 >
                   Renvoyer
                 </button>
                 <button
-                  onClick={() => api.team.deleteInvitation(i.id).then(load).catch((e) => notify(e.message))}
-                  className="text-stone-400 hover:text-red-600"
+                  disabled={busy}
+                  onClick={() => deleteInvitation(i.id, i.email)}
+                  className="text-stone-400 hover:text-red-600 disabled:opacity-50"
                   title="Supprimer"
                 >
                   <i className="fa-regular fa-trash-can"></i>
@@ -136,7 +173,9 @@ export function TeamPage({ notify }) {
               </div>
             </div>
           ))}
-          {pending.length === 0 && <p className="py-3 text-xs text-stone-400">Aucune invitation en attente.</p>}
+          {!loading && pending.length === 0 && (
+            <p className="py-3 text-xs text-stone-400">Aucune invitation en attente.</p>
+          )}
         </div>
       </div>
     </div>
