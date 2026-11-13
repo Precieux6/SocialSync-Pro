@@ -1,11 +1,12 @@
+// socialsync-pro-frontend/src/components/Comments/CommentsManager.jsx
 import React, { useState } from 'react';
 
 export default function CommentsManager({ comments, triggerNotification }) {
   const [commentsPlatformFilter, setCommentsPlatformFilter] = useState('all');
 
-  const filteredComments = commentsPlatformFilter === 'all' 
-    ? comments 
-    : comments.filter(c => c.platform === commentsPlatformFilter);
+  const filteredComments = commentsPlatformFilter === 'all'
+    ? comments
+    : comments.filter((c) => c.platform === commentsPlatformFilter);
 
   const getPlatformBadgeColor = (platform) => {
     switch (platform) {
@@ -53,7 +54,7 @@ export default function CommentsManager({ comments, triggerNotification }) {
             }`}
           >
             <i className="fa-brands fa-instagram"></i>
-            <span>Instagram ({comments.filter(c => c.platform === 'instagram').length})</span>
+            <span>Instagram ({comments.filter((c) => c.platform === 'instagram').length})</span>
           </button>
 
           <button
@@ -63,7 +64,7 @@ export default function CommentsManager({ comments, triggerNotification }) {
             }`}
           >
             <i className="fa-brands fa-facebook"></i>
-            <span>Facebook ({comments.filter(c => c.platform === 'facebook').length})</span>
+            <span>Facebook ({comments.filter((c) => c.platform === 'facebook').length})</span>
           </button>
 
           <button
@@ -73,7 +74,7 @@ export default function CommentsManager({ comments, triggerNotification }) {
             }`}
           >
             <i className="fa-brands fa-youtube"></i>
-            <span>YouTube ({comments.filter(c => c.platform === 'youtube').length})</span>
+            <span>YouTube ({comments.filter((c) => c.platform === 'youtube').length})</span>
           </button>
 
           <button
@@ -83,7 +84,7 @@ export default function CommentsManager({ comments, triggerNotification }) {
             }`}
           >
             <i className="fa-brands fa-tiktok"></i>
-            <span>TikTok ({comments.filter(c => c.platform === 'tiktok').length})</span>
+            <span>TikTok ({comments.filter((c) => c.platform === 'tiktok').length})</span>
           </button>
         </div>
       </div>
@@ -122,7 +123,7 @@ export default function CommentsManager({ comments, triggerNotification }) {
                     onClick={() => triggerNotification(`Réponse sur-mesure pour ${comment.platform.toUpperCase()} régénérée pour ${comment.author}`)}
                     className="bg-[#FAF7F2] border border-[#D6AC66] text-stone-800 text-xs font-bold px-3 py-1 rounded-lg hover:bg-white flex items-center gap-1.5"
                   >
-                    <i className="fa-solid fa-sparkles text-gold-600"></i> Adapté à {comment.platform}
+                    <i className="fa-solid fa-wand-magic-sparkles text-gold-600"></i> Adapté à {comment.platform}
                   </button>
                 </div>
 
@@ -133,7 +134,7 @@ export default function CommentsManager({ comments, triggerNotification }) {
                 />
 
                 <div className="flex justify-end">
-                  <button 
+                  <button
                     onClick={() => triggerNotification(`Réponse envoyée sur ${comment.platform.toUpperCase()} à ${comment.author} !`)}
                     className="bg-stone-900 text-amber-200 text-xs font-bold px-5 py-2 rounded-xl flex items-center gap-2 shadow hover:bg-stone-800"
                   >
