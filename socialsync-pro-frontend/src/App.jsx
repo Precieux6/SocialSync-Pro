@@ -25,6 +25,8 @@ export default function App() {
     isOwner,
     isOwnSpace,
     activeSpace,
+    spaces,
+    switchSpace,
     userRole,
     ownerName,
     myName,
@@ -72,6 +74,19 @@ export default function App() {
     if (!session || !activeSpace) return;
     refreshSetup();
   }, [session?.user?.id, activeSpace?.ownerId, ownSpace]);
+
+  // Changement d'espace : retour au calendrier pour ne pas afficher une page
+  // chargée pour l'espace précédent
+  const onSwitchSpace = useCallback(
+    async (ownerId) => {
+      if (ownerId === activeSpace?.ownerId) return;
+      setTab('calendar');
+      setMenuOpen(false);
+      await switchSpace(ownerId);
+      notify('Espace changé.');
+    },
+    [activeSpace, switchSpace, notify]
+  );
 
   if (loadingSession) return <Loader />;
   if (!session) return <Login />;
@@ -150,6 +165,9 @@ export default function App() {
         userAvatar={myAvatar}
         roleLabel={userRole}
         spaceName={isOwnSpace ? null : ownerName}
+        spaces={spaces}
+        activeSpace={activeSpace}
+        onSwitchSpace={onSwitchSpace}
         onLogout={handleLogout}
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
