@@ -15,6 +15,8 @@ const MAX_CALENDAR_CHARS = 50000;
 const TEXT_EXT = ['.csv', '.txt', '.md'];
 const SHEET_EXT = ['.xlsx', '.xls'];
 const PROFILE_COLUMNS = 'id, name, email, bio, avatar, timezone';
+const AVATAR_PATH = '/storage/v1/object/public/avatars/';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -22,6 +24,11 @@ const upload = multer({
 });
 
 // ---------- Utilitaires ----------
+
+const serverError = (res, where, err) => {
+  console.error(`${where} :`, err);
+  return res.status(500).json({ success: false, error: 'Erreur serveur. Réessayez plus tard.' });
+};
 
 function isValidTimezone(tz) {
   try {
@@ -32,11 +39,23 @@ function isValidTimezone(tz) {
   }
 }
 
-function isOwnAvatarUrl(url) {
-  return typeof url === 'string'
-    && url.includes('/storage/v1/object/public/avatars/')
-    && !url.includes('..')
-    && url.length <= 500;
+// Vérifie que l'URL pointe vers le dossier avatar de l'utilisateur connecté, et seulement celui-ci
+function isOwnAvatarUrl(url, userId) {
+  if (typeof url !== 'string' || url.length > 500) return false;
+  if (!SUPABASE_URL || !UUID_RE.test(userId)) return false;
+
+  let parsed;
+  let base;
+  try {
+    parsed = new URL(url);
+    base = new URL(SUPABASE_URL);
+  } catch {
+    return false;
+  }
+
+  return parsed.origin === base.origin
+    && parsed.pathname.startsWith(`${AVATAR_PATH}${userId}/`)
+    && !parsed.pathname.includes('..');
 }
 
 // Nom d'affichage par défaut : métadonnées Supabase, sinon partie locale de l'e-mail
@@ -46,7 +65,7 @@ function defaultName(user) {
     user.user_metadata?.name ||
     (user.email || '').split('@')[0] ||
     ''
-  ).slice(0, 120);
+  ).replace(/[\r\n]+/g, ' ').trim().slice(0, 120);
 }
 
 async function verifyClaudeKey(apiKey) {
@@ -127,11 +146,12 @@ router.get('/', async (req, res) => {
       .eq('id', req.user.id)
       .maybeSingle();
 
-    if (error) return res.status(500).json({ success: false, error: error.message });
+    if (error) return serverError(res, 'profile/get', error);
 
-    // Création de la fiche si elle n'existe pas encore (l'e-mail est obligatoire)
+    // Création de la fiche si elle n'existe pas encore (l'e-mail est obligatoire).
+    // ignoreDuplicates : une lecture concurrente n'écrase jamais une fiche existante.
     if (!profile) {
-      const { data: created, error: createErr } = await req.db
+      const { error: createErr } = await req.db
         .from('team_member')
         .upsert(
           [{
@@ -142,12 +162,16 @@ router.get('/', async (req, res) => {
             avatar: '',
             timezone: 'Europe/Paris',
           }],
-          { onConflict: 'id' }
-        )
-        .select(PROFILE_COLUMNS)
-        .maybeSingle();
+          { onConflict: 'id', ignoreDuplicates: true }
+        );
+      if (createErr) return serverError(res, 'profile/create', createErr);
 
-      if (createErr) return res.status(500).json({ success: false, error: createErr.message });
+      const { data: created, error: readErr } = await req.db
+        .from('team_member')
+        .select(PROFILE_COLUMNS)
+        .eq('id', req.user.id)
+        .maybeSingle();
+      if (readErr) return serverError(res, 'profile/reread', readErr);
       profile = created;
     }
 
@@ -158,7 +182,7 @@ router.get('/', async (req, res) => {
         .select('claude_key_encrypted, reference_calendar, updated_at')
         .eq('owner_id', req.user.id)
         .maybeSingle();
-      if (sErr) return res.status(500).json({ success: false, error: sErr.message });
+      if (sErr) return serverError(res, 'profile/settings', sErr);
       settings = {
         has_claude_key: Boolean(data?.claude_key_encrypted),
         has_reference_calendar: Boolean(data?.reference_calendar?.content),
@@ -182,7 +206,7 @@ router.get('/', async (req, res) => {
       settings,
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    serverError(res, 'profile/get (global)', err);
   }
 });
 
@@ -195,12 +219,13 @@ router.put('/', async (req, res) => {
     email: req.user.email,
   };
 
-  if (typeof b.name === 'string') update.name = b.name.trim().slice(0, 120);
+  if (typeof b.name === 'string') {
+    update.name = b.name.replace(/[\r\n]+/g, ' ').trim().slice(0, 120);
+  }
   if (typeof b.bio === 'string') update.bio = b.bio.trim().slice(0, 1000);
 
   if (typeof b.avatar === 'string') {
-    const cleanAvatarUrl = b.avatar.split('?')[0];
-    if (b.avatar !== '' && !isOwnAvatarUrl(cleanAvatarUrl)) {
+    if (b.avatar !== '' && !isOwnAvatarUrl(b.avatar.split('?')[0], req.user.id)) {
       return res.status(400).json({ success: false, error: 'Avatar invalide : importez une image depuis votre profil.' });
     }
     update.avatar = b.avatar.slice(0, 500);
@@ -223,10 +248,10 @@ router.put('/', async (req, res) => {
       .select(PROFILE_COLUMNS)
       .single();
 
-    if (error) return res.status(400).json({ success: false, error: error.message });
+    if (error) return serverError(res, 'profile/update', error);
     res.json({ success: true, profile: data });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    serverError(res, 'profile/update (global)', err);
   }
 });
 
@@ -235,24 +260,27 @@ router.put('/password', async (req, res) => {
   if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
     return res.status(400).json({ success: false, error: 'Mots de passe manquants.' });
   }
-  if (newPassword.length < 8) {
-    return res.status(400).json({ success: false, error: 'Le nouveau mot de passe doit faire au moins 8 caractères.' });
+  if (newPassword.length < 8 || newPassword.length > 72) {
+    return res.status(400).json({ success: false, error: 'Le nouveau mot de passe doit faire entre 8 et 72 caractères.' });
   }
   if (newPassword === currentPassword) {
     return res.status(400).json({ success: false, error: "Le nouveau mot de passe doit être différent de l'actuel." });
   }
 
+  const token = String(req.headers.authorization || '').slice(7).trim();
+
   try {
+    // Vérification du mot de passe actuel
     const check = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
       method: 'POST',
       headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: req.user.email, password: currentPassword }),
+      signal: AbortSignal.timeout(8000),
     });
     if (!check.ok) {
       return res.status(400).json({ success: false, error: 'Mot de passe actuel incorrect.' });
     }
 
-    const token = req.headers.authorization.slice(7).trim();
     const upd = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       method: 'PUT',
       headers: {
@@ -261,15 +289,18 @@ router.put('/password', async (req, res) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ password: newPassword }),
+      signal: AbortSignal.timeout(8000),
     });
     if (!upd.ok) {
       return res.status(400).json({ success: false, error: 'Mise à jour du mot de passe impossible.' });
     }
     res.json({ success: true, message: 'Mot de passe mis à jour.' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    serverError(res, 'profile/password', err);
   }
 });
+
+// ---------- Intelligence artificielle ----------
 
 router.put('/claude-key', requireOwner, async (req, res) => {
   const apiKey = String(req.body?.apiKey || '').trim();
@@ -287,10 +318,10 @@ router.put('/claude-key', requireOwner, async (req, res) => {
         { owner_id: req.user.id, claude_key_encrypted: encrypted, updated_at: new Date().toISOString() },
         { onConflict: 'owner_id' }
       );
-    if (error) return res.status(500).json({ success: false, error: error.message });
+    if (error) return serverError(res, 'profile/claude-key', error);
     res.json({ success: true, message: 'Clé Claude vérifiée et enregistrée.' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    serverError(res, 'profile/claude-key (global)', err);
   }
 });
 
@@ -299,9 +330,11 @@ router.delete('/claude-key', requireOwner, async (req, res) => {
     .from('owner_settings')
     .update({ claude_key_encrypted: null, updated_at: new Date().toISOString() })
     .eq('owner_id', req.user.id);
-  if (error) return res.status(500).json({ success: false, error: error.message });
+  if (error) return serverError(res, 'profile/claude-key delete', error);
   res.json({ success: true });
 });
+
+// ---------- Calendrier de référence ----------
 
 router.put('/reference-calendar', requireOwner, async (req, res) => {
   const content = cleanText(String(req.body?.content || ''));
@@ -313,7 +346,7 @@ router.put('/reference-calendar', requireOwner, async (req, res) => {
     await saveReferenceCalendar(req, content, 'Saisie manuelle');
     res.json({ success: true, message: 'Calendrier de référence enregistré.' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    serverError(res, 'profile/reference-calendar', err);
   }
 });
 
@@ -328,10 +361,13 @@ router.post('/reference-calendar/upload', requireOwner, withUpload, async (req, 
         error: `Calendrier trop volumineux après lecture (${content.length} caractères, ${MAX_CALENDAR_CHARS} maximum). Réduisez le fichier.`,
       });
     }
-    await saveReferenceCalendar(req, content, req.file.originalname.slice(0, 200));
+    await saveReferenceCalendar(req, content, req.file.originalname.replace(/[\r\n]+/g, ' ').slice(0, 200));
     res.json({ success: true, message: 'Calendrier de référence importé.', characters: content.length });
   } catch (err) {
-    res.status(err.status || 500).json({ success: false, error: err.message });
+    if (err.status) {
+      return res.status(err.status).json({ success: false, error: err.message });
+    }
+    serverError(res, 'profile/reference-calendar upload', err);
   }
 });
 
@@ -340,7 +376,7 @@ router.delete('/reference-calendar', requireOwner, async (req, res) => {
     .from('owner_settings')
     .update({ reference_calendar: null, updated_at: new Date().toISOString() })
     .eq('owner_id', req.user.id);
-  if (error) return res.status(500).json({ success: false, error: error.message });
+  if (error) return serverError(res, 'profile/reference-calendar delete', error);
   res.json({ success: true });
 });
 
