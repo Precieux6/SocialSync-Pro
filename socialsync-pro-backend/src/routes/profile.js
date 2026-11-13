@@ -14,6 +14,7 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const MAX_CALENDAR_CHARS = 50000;
 const TEXT_EXT = ['.csv', '.txt', '.md'];
 const SHEET_EXT = ['.xlsx', '.xls'];
+const PROFILE_COLUMNS = 'id, name, email, bio, avatar, timezone';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -32,13 +33,20 @@ function isValidTimezone(tz) {
 }
 
 function isOwnAvatarUrl(url) {
-  if (typeof url !== 'string') return false;
-  if (url === '') return true;
-  // Sécurité anti-traversée de chemin et limite de longueur
-  if (url.includes('..') || url.length > 500) return false;
-  
-  // Autorise les URLs de stockage Supabase, les avatars OAuth externes (Google, GitHub, etc.) et les URLs HTTP/HTTPS valides
-  return url.startsWith('http://') || url.startsWith('https://');
+  return typeof url === 'string'
+    && url.includes('/storage/v1/object/public/avatars/')
+    && !url.includes('..')
+    && url.length <= 500;
+}
+
+// Nom d'affichage par défaut : métadonnées Supabase, sinon partie locale de l'e-mail
+function defaultName(user) {
+  return (
+    user.user_metadata?.full_name ||
+    user.user_metadata?.name ||
+    (user.email || '').split('@')[0] ||
+    ''
+  ).slice(0, 120);
 }
 
 async function verifyClaudeKey(apiKey) {
@@ -78,9 +86,7 @@ function extractCalendarText(file) {
       .join('\n\n');
     return cleanText(text);
   }
-  const err = new Error(
-    'Format non pris en charge. Envoyez un fichier .xlsx, .csv, .txt ou .md.'
-  );
+  const err = new Error('Format non pris en charge. Envoyez un fichier .xlsx, .csv, .txt ou .md.');
   err.status = 400;
   throw err;
 }
@@ -117,30 +123,32 @@ router.get('/', async (req, res) => {
   try {
     let { data: profile, error } = await req.db
       .from('team_member')
-      .select('id, name, email, bio, avatar, timezone')
+      .select(PROFILE_COLUMNS)
       .eq('id', req.user.id)
       .maybeSingle();
 
     if (error) return res.status(500).json({ success: false, error: error.message });
 
+    // Création de la fiche si elle n'existe pas encore (l'e-mail est obligatoire)
     if (!profile) {
-      const defaultProfile = {
-        id: req.user.id,
-        email: req.user.email || '',
-        name: req.user.user_metadata?.name || '',
-        bio: '',
-        avatar: '',
-        timezone: 'Europe/Paris'
-      };
       const { data: created, error: createErr } = await req.db
         .from('team_member')
-        .upsert([defaultProfile], { onConflict: 'id' })
-        .select('id, name, email, bio, avatar, timezone')
+        .upsert(
+          [{
+            id: req.user.id,
+            email: req.user.email,
+            name: defaultName(req.user),
+            bio: '',
+            avatar: '',
+            timezone: 'Europe/Paris',
+          }],
+          { onConflict: 'id' }
+        )
+        .select(PROFILE_COLUMNS)
         .maybeSingle();
-      
-      if (!createErr && created) {
-        profile = created;
-      }
+
+      if (createErr) return res.status(500).json({ success: false, error: createErr.message });
+      profile = created;
     }
 
     let settings = null;
@@ -180,7 +188,12 @@ router.get('/', async (req, res) => {
 
 router.put('/', async (req, res) => {
   const b = req.body || {};
-  const update = { id: req.user.id };
+
+  // L'e-mail et l'identifiant viennent toujours de la session : la colonne email est NOT NULL
+  const update = {
+    id: req.user.id,
+    email: req.user.email,
+  };
 
   if (typeof b.name === 'string') update.name = b.name.trim().slice(0, 120);
   if (typeof b.bio === 'string') update.bio = b.bio.trim().slice(0, 1000);
@@ -200,12 +213,14 @@ router.put('/', async (req, res) => {
     update.timezone = b.timezone;
   }
 
+  // Nom par défaut à la création si rien n'est fourni
+  if (update.name === undefined) update.name = defaultName(req.user);
+
   try {
-    // Utilisation d'un upsert pour insérer ou mettre à jour la ligne sans échec
     const { data, error } = await req.db
       .from('team_member')
       .upsert(update, { onConflict: 'id' })
-      .select('id, name, email, bio, avatar, timezone')
+      .select(PROFILE_COLUMNS)
       .single();
 
     if (error) return res.status(400).json({ success: false, error: error.message });
@@ -316,7 +331,7 @@ router.post('/reference-calendar/upload', requireOwner, withUpload, async (req, 
     await saveReferenceCalendar(req, content, req.file.originalname.slice(0, 200));
     res.json({ success: true, message: 'Calendrier de référence importé.', characters: content.length });
   } catch (err) {
-    res.status(err.status || 500).json({ success: false, error: err.message});
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 
