@@ -1,14 +1,21 @@
 // socialsync-pro-frontend/src/components/setup/Onboarding.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../services/api';
-import { SocialAccountsForm, ClaudeKeyForm, ReferenceCalendarForm } from './SetupForms';
+import {
+  SocialAccountsForm,
+  ClaudeKeyForm,
+  ReferenceCalendarForm,
+  clearSecretDrafts,
+} from './SetupForms';
+
+const STEP_KEY = 'onboarding_current_step';
 
 const STEPS = [
   {
     key: 'socialAccounts',
     required: true,
     title: '1. Connecter vos comptes réseaux',
-    text: 'Renseignez les identifiants d\'au moins un compte (Instagram, Facebook, YouTube ou TikTok). Obligatoire.',
+    text: "Renseignez les identifiants d'au moins un compte (Instagram, Facebook, YouTube ou TikTok). Obligatoire.",
   },
   {
     key: 'referenceCalendar',
@@ -20,7 +27,7 @@ const STEPS = [
     key: 'claudeKey',
     required: false,
     title: '3. Clé API Claude',
-    text: 'Active la génération de légendes et de contenus. Facultatif : vous pourrez l\'ajouter plus tard dans « Mon profil ».',
+    text: "Active la génération de légendes et de contenus. Facultatif : vous pourrez l'ajouter plus tard dans « Mon profil ».",
   },
 ];
 
@@ -29,75 +36,65 @@ const firstOpen = (status) => {
   return i === -1 ? 0 : i;
 };
 
+const BTN_PRIMARY = 'px-5 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow hover:bg-stone-800';
+const BTN_SECONDARY = 'px-5 py-2.5 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-700 text-xs font-bold hover:bg-[#E8DFC9]';
+
 export default function Onboarding({ onComplete, onLogout, notify }) {
   const [status, setStatus] = useState({ socialAccounts: false, claudeKey: false, referenceCalendar: false });
-  
-  // Utilisation exclusive du localStorage pour verrouiller l'étape active sans écrasement distant intempestif
+
+  // Mémorisé avant tout effet : sans cela, l'écriture de l'étape empêcherait la première étape automatique
+  const [hadSavedStep] = useState(() => localStorage.getItem(STEP_KEY) !== null);
+
   const [step, setStep] = useState(() => {
-    const saved = localStorage.getItem('onboarding_current_step');
-    return saved !== null ? parseInt(saved, 10) : 0;
+    const saved = parseInt(localStorage.getItem(STEP_KEY) ?? '', 10);
+    return Number.isInteger(saved) && saved >= 0 && saved < STEPS.length ? saved : 0;
   });
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
 
-  // Sauvegarde instantanée de l'étape active
   useEffect(() => {
-    localStorage.setItem('onboarding_current_step', step);
+    localStorage.setItem(STEP_KEY, String(step));
   }, [step]);
 
-  // Chargement initial unique au montage du composant (ne se relance plus jamais en arrière-plan)
-  useEffect(() => {
-    let isMounted = true;
+  // Chargement de l'état : au montage et via « Réessayer » (sans recharger la page)
+  const loadStatus = useCallback(async () => {
     setLoading(true);
-
-    api.setup.status()
-      .then((r) => {
-        if (!isMounted) return;
-        setStatus(r.status);
-        // Si aucune étape n'est mémorisée, on positionne sur la première non validée
-        if (localStorage.getItem('onboarding_current_step') === null) {
-          setStep(firstOpen(r.status));
-        }
-      })
-      .catch((e) => {
-        if (isMounted) setLoadError(e.message);
-      })
-      .finally(() => {
-        if (isMounted) setLoading(false);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, []); // Tableau de dépendances vide pour bloquer tout rechargement cyclique
-
-  const onSaved = async () => {
+    setLoadError(null);
     try {
       const r = await api.setup.status();
       setStatus(r.status);
+      if (!hadSavedStep) setStep(firstOpen(r.status));
+    } catch (e) {
+      setLoadError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [hadSavedStep]);
 
-      if (r.complete) {
-        // Nettoyage complet des caches d'onboarding une fois terminé
-        localStorage.removeItem('onboarding_current_step');
-        localStorage.removeItem('social_accounts_draft');
-        localStorage.removeItem('claude_key_draft');
-        notify('Configuration terminée. Bienvenue dans SocialSync Pro !');
-        onComplete();
-      } else {
-        // Passage automatique à l'étape obligatoire suivante
-        const nextStep = firstOpen(r.status);
-        setStep(nextStep);
-      }
+  useEffect(() => {
+    loadStatus();
+  }, [loadStatus]);
+
+  // Après un enregistrement : mise à jour de l'état seulement.
+  // Pas de changement d'étape automatique et pas de démontage du formulaire.
+  const refresh = useCallback(async () => {
+    try {
+      const r = await api.setup.status();
+      setStatus(r.status);
     } catch (e) {
       notify(e.message);
     }
+  }, [notify]);
+
+  const finish = () => {
+    localStorage.removeItem(STEP_KEY);
+    clearSecretDrafts();
+    notify('Configuration terminée. Bienvenue dans SocialSync Pro !');
+    onComplete();
   };
 
-  const skip = () => {
-    const next = STEPS.findIndex((s, i) => i > step && s.required && !status[s.key]);
-    setStep(next === -1 ? step + 1 : next);
-  };
+  const goNext = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
 
   if (loading) {
     return (
@@ -113,16 +110,10 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
         <div className="bg-white border border-[#E2D5C3] rounded-3xl p-8 shadow-sm max-w-md w-full text-center space-y-4">
           <p className="text-sm text-stone-800">{loadError}</p>
           <div className="flex items-center justify-center gap-3">
-            <button
-              onClick={() => window.location.reload()}
-              className="px-5 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow"
-            >
+            <button onClick={loadStatus} className={BTN_PRIMARY}>
               Réessayer
             </button>
-            <button
-              onClick={onLogout}
-              className="px-5 py-2.5 rounded-xl bg-[#F4EFE6] text-stone-700 text-xs font-bold"
-            >
+            <button onClick={onLogout} className={BTN_SECONDARY}>
               Se déconnecter
             </button>
           </div>
@@ -132,8 +123,11 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
   }
 
   const current = STEPS[step] || STEPS[0];
+  const isLast = step === STEPS.length - 1;
+  const currentDone = Boolean(status[current.key]);
   const requiredTotal = STEPS.filter((s) => s.required).length;
   const requiredDone = STEPS.filter((s) => s.required && status[s.key]).length;
+  const complete = requiredDone === requiredTotal;
 
   return (
     <div className="min-h-screen bg-[#FAF7F2] p-4 md:p-10 font-sans">
@@ -173,19 +167,29 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
             <p className="text-xs text-stone-600 mt-1">{current.text}</p>
           </div>
 
-          {current.key === 'socialAccounts' && <SocialAccountsForm onSaved={onSaved} notify={notify} />}
-          {current.key === 'claudeKey' && <ClaudeKeyForm configured={status.claudeKey} onSaved={onSaved} notify={notify} />}
+          {current.key === 'socialAccounts' && <SocialAccountsForm onSaved={refresh} notify={notify} />}
+          {current.key === 'claudeKey' && <ClaudeKeyForm configured={status.claudeKey} onSaved={refresh} notify={notify} />}
           {current.key === 'referenceCalendar' && (
-            <ReferenceCalendarForm configured={status.referenceCalendar} onSaved={onSaved} notify={notify} />
+            <ReferenceCalendarForm configured={status.referenceCalendar} onSaved={refresh} notify={notify} />
           )}
 
-          {!current.required && (
-            <div className="flex justify-end pt-2 border-t border-[#E2D5C3]">
-              <button onClick={skip} className="text-xs font-bold text-stone-600 hover:text-stone-900 px-4 py-2">
+          <div className="flex flex-wrap items-center justify-end gap-3 pt-4 border-t border-[#E2D5C3]">
+            {!current.required && !currentDone && (
+              <button onClick={goNext} className={BTN_SECONDARY}>
                 Plus tard
               </button>
-            </div>
-          )}
+            )}
+            {currentDone && !isLast && (
+              <button onClick={goNext} className={BTN_SECONDARY}>
+                Étape suivante
+              </button>
+            )}
+            {complete && (
+              <button onClick={finish} className={BTN_PRIMARY}>
+                Accéder à SocialSync Pro
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="text-center">
