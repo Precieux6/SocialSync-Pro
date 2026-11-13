@@ -45,7 +45,7 @@ async function loadSpaceAiConfig(req) {
   const { data: ref, error: rErr } = await req.db.rpc('get_space_reference_calendar', { p_owner: req.ownerId });
   if (rErr) throw new Error('Lecture du calendrier de référence refusée.');
 
-  const reference = ref?.content ? String(ref.content).slice(0, 20000) : null;
+  const reference = ref?.content ? String(ref.content).slice(0, 100000) : null;
   return { apiKey, reference };
 }
 
