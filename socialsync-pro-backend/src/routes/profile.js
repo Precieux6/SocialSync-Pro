@@ -11,7 +11,7 @@ const router = express.Router();
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
-const MAX_CALENDAR_CHARS = 50000;
+const MAX_CALENDAR_CHARS = 100000;
 const TEXT_EXT = ['.csv', '.txt', '.md'];
 const SHEET_EXT = ['.xlsx', '.xls'];
 const PROFILE_COLUMNS = 'id, name, email, bio, avatar, timezone';
