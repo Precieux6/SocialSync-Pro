@@ -36,18 +36,29 @@ const PLATFORMS = [
   },
 ];
 
+// Brouillons des secrets : mémoire de la page uniquement, jamais dans le localStorage.
+// Ils survivent aux changements d'onglet d'étape, mais disparaissent au rechargement ou à la déconnexion.
+const secretDrafts = { social: {}, claudeKey: '' };
+
+export function clearSecretDrafts() {
+  secretDrafts.social = {};
+  secretDrafts.claudeKey = '';
+}
+
+// Suppression des anciens brouillons stockés en clair par les versions précédentes
+localStorage.removeItem('social_accounts_draft');
+localStorage.removeItem('claude_key_draft');
+
 export function SocialAccountsForm({ onSaved, notify }) {
   const [current, setCurrent] = useState(null);
-  // Persistance du brouillon dans le localStorage pour éviter la perte de données
-  const [draft, setDraft] = useState(() => {
-    const saved = localStorage.getItem('social_accounts_draft');
-    return saved ? JSON.parse(saved) : {};
-  });
+  const [draft, setDraftState] = useState(secretDrafts.social);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    localStorage.setItem('social_accounts_draft', JSON.stringify(draft));
-  }, [draft]);
+  const setDraft = (next) => {
+    const value = typeof next === 'function' ? next(secretDrafts.social) : next;
+    secretDrafts.social = value;
+    setDraftState(value);
+  };
 
   const reload = async () => {
     const r = await api.setup.getSocialAccounts();
@@ -64,7 +75,11 @@ export function SocialAccountsForm({ onSaved, notify }) {
   const save = async () => {
     const payload = {};
     for (const [pid, fields] of Object.entries(draft)) {
-      const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v && v.trim()));
+      const clean = Object.fromEntries(
+        Object.entries(fields)
+          .map(([k, v]) => [k, String(v ?? '').trim()])
+          .filter(([, v]) => v)
+      );
       if (Object.keys(clean).length) payload[pid] = clean;
     }
     if (Object.keys(payload).length === 0) {
@@ -75,10 +90,9 @@ export function SocialAccountsForm({ onSaved, notify }) {
     try {
       await api.setup.saveSocialAccounts(payload);
       setDraft({});
-      localStorage.removeItem('social_accounts_draft');
       await reload();
       notify('Comptes réseaux enregistrés.');
-      if (onSaved) onSaved();
+      if (onSaved) await onSaved();
     } catch (e) {
       notify(e.message);
     } finally {
@@ -105,6 +119,7 @@ export function SocialAccountsForm({ onSaved, notify }) {
               <label className="block text-[10px] text-stone-500 mb-1">{f.label}</label>
               <input
                 type={f.secret ? 'password' : 'text'}
+                autoComplete="off"
                 className={input}
                 value={
                   f.secret
@@ -136,15 +151,13 @@ export function SocialAccountsForm({ onSaved, notify }) {
 }
 
 export function ClaudeKeyForm({ configured, onSaved, notify }) {
-  // Persistance de la clé Claude dans le localStorage
-  const [apiKey, setApiKey] = useState(() => {
-    return localStorage.getItem('claude_key_draft') || '';
-  });
+  const [apiKey, setApiKeyState] = useState(secretDrafts.claudeKey);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    localStorage.setItem('claude_key_draft', apiKey);
-  }, [apiKey]);
+  const setApiKey = (value) => {
+    secretDrafts.claudeKey = value;
+    setApiKeyState(value);
+  };
 
   const save = async () => {
     const k = apiKey.trim();
@@ -156,9 +169,8 @@ export function ClaudeKeyForm({ configured, onSaved, notify }) {
     try {
       await api.profile.saveClaudeKey(k);
       setApiKey('');
-      localStorage.removeItem('claude_key_draft');
       notify('Clé Claude vérifiée et enregistrée.');
-      if (onSaved) onSaved();
+      if (onSaved) await onSaved();
     } catch (e) {
       notify(e.message);
     } finally {
@@ -174,6 +186,7 @@ export function ClaudeKeyForm({ configured, onSaved, notify }) {
       </p>
       <input
         type="password"
+        autoComplete="off"
         className={input}
         value={apiKey}
         onChange={(e) => setApiKey(e.target.value)}
@@ -205,7 +218,7 @@ export function ReferenceCalendarForm({ configured, sourceName, onSaved, notify 
     try {
       const r = await api.profile.uploadReferenceCalendar(file);
       notify(`Calendrier « ${file.name} » importé (${r.characters} caractères).`);
-      if (onSaved) onSaved();
+      if (onSaved) await onSaved();
     } catch (err) {
       notify(err.message);
     } finally {
