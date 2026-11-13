@@ -1,9 +1,12 @@
 {
   "name": "socialsync-pro-backend",
   "version": "1.1.0",
-  "description": "Backend Node.js API pour SocialSync Pro avec Supabase, Gemini API & Resend",
+  "description": "Backend Node.js API pour SocialSync Pro avec Supabase, Claude API & Resend",
   "main": "src/server.js",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js"
@@ -17,7 +20,7 @@
     "express-rate-limit": "^8.7.3",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.0.2",
     "resend": "^3.2.0",
     "xlsx": "^0.18.5"
   },
