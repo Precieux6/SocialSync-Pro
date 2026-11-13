@@ -9,6 +9,14 @@ const STORAGE_KEY = 'socialsync.activeSpaceId';
 // Délai d'attente par défaut : 5 minutes
 export const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
+// Règles appliquées côté client avant l'envoi direct vers le stockage Supabase
+const UPLOAD_RULES = {
+  avatars: {
+    maxBytes: 5 * 1024 * 1024,
+    types: ['image/png', 'image/jpeg', 'image/webp'],
+  },
+};
+
 let activeSpaceId = localStorage.getItem(STORAGE_KEY);
 
 export const getActiveSpaceId = () => activeSpaceId;
@@ -65,6 +73,16 @@ async function request(path, { method = 'GET', body, space = true, timeoutMs } =
 }
 
 export async function uploadFile(bucket, path, file) {
+  const rule = UPLOAD_RULES[bucket];
+  if (rule) {
+    if (rule.types && !rule.types.includes(file.type)) {
+      throw new Error('Format non accepté. Utilisez une image PNG, JPEG ou WebP.');
+    }
+    if (rule.maxBytes && file.size > rule.maxBytes) {
+      throw new Error('Fichier trop volumineux (5 Mo maximum).');
+    }
+  }
+
   const { error } = await supabase.storage
     .from(bucket)
     .upload(path, file, { upsert: true, contentType: file.type });
@@ -91,11 +109,11 @@ export const api = {
     saveReferenceCalendar: (content) =>
       request('/profile/reference-calendar', { method: 'PUT', body: { content } }),
     uploadReferenceCalendar: (file) => {
-      // Wrapper sécurisé pour l'upload multipart via fetch
+      // Envoi multipart : le navigateur gère lui-même le boundary du FormData
       return authHeaders().then(async ({ headers }) => {
         const form = new FormData();
         form.append('file', file);
-        delete headers['Content-Type']; // Laisser le navigateur gérer le boundary du FormData
+        delete headers['Content-Type'];
         const res = await fetchWithTimeout(`${API_URL}/profile/reference-calendar/upload`, {
           method: 'POST',
           headers,
