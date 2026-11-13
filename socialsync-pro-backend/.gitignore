@@ -1,4 +1,21 @@
+# Dépendances
 node_modules/
+
+# Variables d'environnement (ne jamais versionner)
 .env
+.env.*
+!.env.example
+
+# Fichiers téléversés en local pendant les tests
 uploads/
+
+# Journaux
+logs/
 *.log
+npm-debug.log*
+
+# Éditeurs et système
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
