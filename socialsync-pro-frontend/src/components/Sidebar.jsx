@@ -55,6 +55,9 @@ export default function Sidebar({
   userAvatar,
   roleLabel,
   spaceName,
+  spaces = [],
+  activeSpace,
+  onSwitchSpace,
   onLogout,
   open,
   onClose,
@@ -65,6 +68,7 @@ export default function Sidebar({
   };
 
   const displayName = (userName || '').trim() || 'Utilisateur';
+  const showSpaceSelector = spaces.length > 1 && typeof onSwitchSpace === 'function';
 
   return (
     <>
@@ -114,6 +118,30 @@ export default function Sidebar({
               )}
             </div>
           </div>
+
+          {/* Sélecteur d'espace : visible seulement si l'utilisateur a accès à plusieurs espaces */}
+          {showSpaceSelector && (
+            <div className="space-y-1.5">
+              <label
+                htmlFor="space-selector"
+                className="block text-[10px] font-bold uppercase tracking-wider text-stone-600"
+              >
+                Espace de travail
+              </label>
+              <select
+                id="space-selector"
+                value={activeSpace?.ownerId ?? ''}
+                onChange={(e) => onSwitchSpace(e.target.value)}
+                className="w-full bg-[#FAF7F2] border border-[#E2D5C3] rounded-xl p-2.5 text-xs font-bold text-stone-800 focus:outline-none focus:border-gold-500"
+              >
+                {spaces.map((s) => (
+                  <option key={s.ownerId} value={s.ownerId}>
+                    {s.isOwn ? 'Mon espace' : s.ownerName}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <nav className="space-y-1.5">
             {MAIN_ITEMS.map((item) => (
