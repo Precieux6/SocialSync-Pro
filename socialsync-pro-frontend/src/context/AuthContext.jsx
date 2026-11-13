@@ -2,11 +2,15 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { api, getActiveSpaceId, setActiveSpaceId } from '../services/api';
+import { clearSecretDrafts } from '../components/setup/SetupForms';
 
 const AuthContext = createContext(null);
 
 const OWNER_ROLE = 'Propriétaire';
 const RELOAD_EVENTS = ['SIGNED_IN', 'SIGNED_OUT', 'USER_UPDATED'];
+
+// Clés de stockage local utilisées par l'onboarding et les anciennes versions
+const LEGACY_KEYS = ['onboarding_current_step', 'social_accounts_draft', 'claude_key_draft'];
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
@@ -157,13 +161,16 @@ export function AuthProvider({ children }) {
     };
   }, [loadSpaces]);
 
-  const switchSpace = async (ownerId) => {
-    const next = spaces.find((s) => s.ownerId === ownerId);
-    if (!next) return;
-    setActiveSpace(next);
-    setActiveSpaceId(next.ownerId);
-    await loadOwnerProfile(next.ownerId);
-  };
+  const switchSpace = useCallback(
+    async (ownerId) => {
+      const next = spaces.find((s) => s.ownerId === ownerId);
+      if (!next) return;
+      setActiveSpace(next);
+      setActiveSpaceId(next.ownerId);
+      await loadOwnerProfile(next.ownerId);
+    },
+    [spaces, loadOwnerProfile]
+  );
 
   const refreshProfiles = useCallback(async () => {
     if (!session?.user) return;
@@ -174,9 +181,9 @@ export function AuthProvider({ children }) {
   }, [session, activeSpace, loadOwnerProfile, loadMyProfile]);
 
   const handleLogout = async () => {
-    localStorage.removeItem('onboarding_current_step');
-    localStorage.removeItem('social_accounts_draft');
-    localStorage.removeItem('claude_key_draft');
+    // Brouillons de secrets effacés de la mémoire et anciennes clés du localStorage supprimées
+    clearSecretDrafts();
+    LEGACY_KEYS.forEach((key) => localStorage.removeItem(key));
 
     await supabase.auth.signOut().catch(() => {});
     setActiveSpaceId(null);
