@@ -1,7 +1,7 @@
 // socialsync-pro-backend/src/routes/calendar.js
 import express from 'express';
 import { requireOwner } from '../middleware/auth.js';
-import { ensureBlock } from '../services/calendarBlocks.js';
+import { ensureBlock, weekNumOf } from '../services/calendarBlocks.js';
 
 const router = express.Router();
 
@@ -98,13 +98,15 @@ async function spaceTimezone(req) {
   }
 }
 
+// Thèmes indexés par date de début de semaine (lundi), ex. { "2026-12-07": "Titre" }
 async function loadThemes(req) {
   const { data, error } = await req.db
     .from('weeks_themes')
-    .select('week, title')
-    .eq('owner_id', req.ownerId);
+    .select('week_start, title')
+    .eq('owner_id', req.ownerId)
+    .not('week_start', 'is', null);
   if (error) throw new Error(error.message);
-  return Object.fromEntries((data || []).map((t) => [t.week, t.title]));
+  return Object.fromEntries((data || []).map((t) => [t.week_start, t.title]));
 }
 
 async function loadPost(req, id) {
@@ -129,7 +131,8 @@ router.get('/themes', async (req, res) => {
       .from('weeks_themes')
       .select('*')
       .eq('owner_id', req.ownerId)
-      .order('week', { ascending: true });
+      .not('week_start', 'is', null)
+      .order('week_start', { ascending: true });
     if (error) return res.status(500).json({ success: false, error: error.message });
 
     res.json({ success: true, themes: data || [], isDefault: !data || data.length === 0 });
@@ -138,21 +141,23 @@ router.get('/themes', async (req, res) => {
   }
 });
 
-router.put('/themes/:weekNum', requireOwner, async (req, res) => {
-  const weekNum = parseInt(req.params.weekNum, 10);
+// Saisie d'un thème pour la semaine qui commence au lundi weekStart (YYYY-MM-DD)
+router.put('/themes/:weekStart', requireOwner, async (req, res) => {
+  const weekStart = String(req.params.weekStart || '');
   const title = String(req.body?.title || '').trim().slice(0, 200);
 
-  if (!Number.isInteger(weekNum) || weekNum < 1 || weekNum > 13) {
-    return res.status(400).json({ success: false, error: 'Numéro de semaine invalide.' });
+  if (!isValidDate(weekStart) || dayIndexOf(weekStart) !== 0) {
+    return res.status(400).json({ success: false, error: 'Date de semaine invalide (un lundi au format YYYY-MM-DD).' });
   }
   if (!title) return res.status(400).json({ success: false, error: 'Titre vide.' });
 
   try {
+    // Un thème saisi à la main n'est plus considéré comme généré
     const { data: updated, error: uErr } = await req.db
       .from('weeks_themes')
-      .update({ title })
-      .eq('week', weekNum)
+      .update({ title, ai_generated: false })
       .eq('owner_id', req.ownerId)
+      .eq('week_start', weekStart)
       .select();
     if (uErr) return res.status(500).json({ success: false, error: uErr.message });
 
@@ -162,7 +167,14 @@ router.put('/themes/:weekNum', requireOwner, async (req, res) => {
 
     const { data: created, error: cErr } = await req.db
       .from('weeks_themes')
-      .insert([{ week: weekNum, title, owner_id: req.ownerId, user_id: req.user.id }])
+      .insert([{
+        owner_id: req.ownerId,
+        user_id: req.user.id,
+        week_start: weekStart,
+        week: weekNumOf(weekStart),
+        title,
+        ai_generated: false,
+      }])
       .select()
       .single();
     if (cErr) return res.status(500).json({ success: false, error: cErr.message });
