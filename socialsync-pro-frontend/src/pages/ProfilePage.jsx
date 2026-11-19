@@ -4,6 +4,7 @@ import { api, uploadFile } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
 import { ClaudeKeyForm, ReferenceCalendarForm } from '../components/setup/SetupForms';
+import ExamplesManager from '../components/setup/ExamplesManager';
 
 export const TIMEZONES = [
   'Europe/Paris', 'Africa/Porto-Novo', 'Africa/Abidjan', 'Africa/Casablanca',
@@ -254,6 +255,10 @@ export default function ProfilePage({ notify }) {
                 onSaved={loadSettings}
                 notify={notify}
               />
+            </div>
+            <div className="space-y-3">
+              <h4 className="font-serif font-bold text-sm text-stone-900">Exemples de référence</h4>
+              <ExamplesManager notify={notify} />
             </div>
           </div>
         )}
