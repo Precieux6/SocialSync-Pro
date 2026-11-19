@@ -258,10 +258,10 @@ router.put('/posts/:id', async (req, res) => {
 
   if (b.brief !== undefined) patch.brief = String(b.brief).slice(0, 5000);
   if (b.caption !== undefined) patch.caption = String(b.caption).slice(0, 2200);
-  if (b.image_prompt !== undefined) patch.image_prompt = String(b.image_prompt).slice(0, 1000);
-  if (b.thumbnail_prompt !== undefined) patch.thumbnail_prompt = String(b.thumbnail_prompt).slice(0, 1000);
+  if (b.image_prompt !== undefined) patch.image_prompt = String(b.image_prompt).slice(0, 2000);
+  if (b.thumbnail_prompt !== undefined) patch.thumbnail_prompt = String(b.thumbnail_prompt).slice(0, 2000);
   if (b.first_comment !== undefined) patch.first_comment = String(b.first_comment).slice(0, 2200);
-  if (b.script !== undefined) patch.script = String(b.script).slice(0, 10000);
+  if (b.script !== undefined) patch.script = String(b.script).slice(0, 40000);
 
   if (b.slides !== undefined) {
     if (!Array.isArray(b.slides)) {
