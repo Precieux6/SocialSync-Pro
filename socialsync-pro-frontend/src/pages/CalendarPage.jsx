@@ -6,6 +6,7 @@ import PostEditor from '../components/calendar/PostEditor';
 import { MONTHS_LIST, DAY_LABELS, addDays, weekStartFor, shortDate } from '../utils/calendarGrid';
 
 const FORMATS = ['Photo', 'Carrousel', 'Vidéo courte', 'Séance YouTube', 'Story', 'Question', 'Live'];
+const READ_ONLY_ROLE = 'Relecteur / Client';
 
 const STATUS_STYLE = {
   brouillon: 'bg-stone-100 text-stone-700 border-stone-200',
@@ -74,7 +75,7 @@ function AddPostModal({ date, weekNum, onClose, onCreated, notify }) {
 }
 
 export default function CalendarPage({ notify }) {
-  const { isOwner } = useAuth();
+  const { isOwner, userRole } = useAuth();
   const [year, setYear] = useState(new Date().getUTCFullYear());
   const [monthCode, setMonthCode] = useState('NOV');
   const month = MONTHS_LIST.find((m) => m.code === monthCode) || MONTHS_LIST[0];
@@ -89,7 +90,10 @@ export default function CalendarPage({ notify }) {
   const [draftTitle, setDraftTitle] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const [generating, setGenerating] = useState(false);
   const [adding, setAdding] = useState(null);
+
+  const canGenerate = Boolean(userRole) && userRole !== READ_ONLY_ROLE;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -113,6 +117,23 @@ export default function CalendarPage({ notify }) {
     setSelectedId(null);
     load();
   }, [load]);
+
+  const onGenerateNow = async () => {
+    setGenerating(true);
+    try {
+      const r = await api.ai.generateNow();
+      if (!r.requested) {
+        notify('Rien à rédiger : les semaines à venir sont déjà prêtes.');
+      } else {
+        notify(`${r.generated} publication(s) rédigée(s) pour la semaine du ${shortDate(r.weekStart)}.`);
+      }
+      await load();
+    } catch (e) {
+      notify(e.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const weeks = useMemo(() => {
     return [0, 1, 2, 3].map((i) => {
@@ -172,7 +193,17 @@ export default function CalendarPage({ notify }) {
             Cliquez sur une publication pour rédiger son brief, sa légende et son visuel. Le « + » ajoute une publication hors calendrier.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {canGenerate && (
+            <button
+              onClick={onGenerateNow}
+              disabled={generating || loading}
+              type="button"
+              className="px-4 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow hover:bg-stone-800 disabled:opacity-50 whitespace-nowrap"
+            >
+              {generating ? 'Rédaction en cours...' : 'Générer maintenant 🤖'}
+            </button>
+          )}
           <select
             value={monthCode}
             onChange={(e) => setMonthCode(e.target.value)}
