@@ -11,7 +11,6 @@
     { "src": "/(.*)", "dest": "src/server.js" }
   ],
   "crons": [
-    { "path": "/api/internal/content-job", "schedule": "0 */3 * * *" },
-    { "path": "/api/internal/publish-due", "schedule": "*/10 * * * *" }
+    { "path": "/api/internal/content-job", "schedule": "0 5 * * *" }
   ]
 }
