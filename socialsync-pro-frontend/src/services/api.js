@@ -154,6 +154,7 @@ export const api = {
       request(`/calendar/posts?start=${start}&startWeek=${startWeek}`),
     createPost: (data) => request('/calendar/posts', { method: 'POST', body: data }),
     updatePost: (id, data) => request(`/calendar/posts/${id}`, { method: 'PUT', body: data }),
+    validate: (id) => request(`/calendar/posts/${id}/validate`, { method: 'POST' }),
     schedule: (id, local_datetime) =>
       request(`/calendar/posts/${id}/schedule`, { method: 'POST', body: { local_datetime } }),
     publishNow: (id) => request(`/calendar/posts/${id}/publish-now`, { method: 'POST' }),
@@ -183,5 +184,6 @@ export const api = {
       request('/ai/generate-caption', { method: 'POST', body: { title, theme, platform } }),
     prompt: (theme, platform) =>
       request('/ai/generate-prompt', { method: 'POST', body: { theme, platform } }),
+    generateNow: () => request('/ai/generate-now', { method: 'POST' }),
   },
 };
