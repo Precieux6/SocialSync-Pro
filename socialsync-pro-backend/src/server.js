@@ -44,6 +44,8 @@ app.use(helmet());
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    // Sans ce journal, une origine refusée ne laisse qu'une « erreur CORS » côté navigateur
+    console.warn('CORS : origine refusée :', origin);
     return callback(null, false);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
