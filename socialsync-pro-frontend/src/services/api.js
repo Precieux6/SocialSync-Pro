@@ -186,4 +186,10 @@ export const api = {
       request('/ai/generate-prompt', { method: 'POST', body: { theme, platform } }),
     generateNow: () => request('/ai/generate-now', { method: 'POST' }),
   },
+
+  examples: {
+    list: () => request('/examples'),
+    create: (data) => request('/examples', { method: 'POST', body: data }),
+    remove: (id) => request(`/examples/${id}`, { method: 'DELETE' }),
+  },
 };
