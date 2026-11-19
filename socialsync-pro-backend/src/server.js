@@ -16,6 +16,7 @@ import profileRoutes from './routes/profile.js';
 import setupRoutes from './routes/setup.js';
 import accountRoutes from './routes/account.js';
 import internalRoutes from './routes/internal.js';
+import examplesRoutes from './routes/examples.js';
 
 import { requireAuth } from './middleware/auth.js';
 
@@ -101,6 +102,7 @@ app.use('/api/ai', requireAuth, aiRoutes);
 app.use('/api/profile', requireAuth, profileRoutes);
 app.use('/api/setup', requireAuth, setupRoutes);
 app.use('/api/account', requireAuth, accountRoutes);
+app.use('/api/examples', requireAuth, examplesRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Route introuvable.' });
