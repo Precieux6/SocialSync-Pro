@@ -1,6 +1,7 @@
 // socialsync-pro-backend/src/routes/calendar.js
 import express from 'express';
 import { requireOwner } from '../middleware/auth.js';
+import { ensureBlock } from '../services/calendarBlocks.js';
 
 const router = express.Router();
 
@@ -9,17 +10,14 @@ const TAG_RE = /^[@#]?[\p{L}\p{N}_.\-]{1,50}$/u;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const LOCAL_DT_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
 const DEFAULT_TZ = 'Europe/Paris';
+const HTTPS_RE = /^https:\/\//;
 
 const FORMATS = ['Photo', 'Carrousel', 'Vidéo courte', 'Séance YouTube', 'Story', 'Question', 'Live'];
 
-const DAY_TEMPLATE = [
-  ['Photo'],
-  ['Carrousel', 'Story', 'Live'],
-  ['Vidéo courte'],
-  ['Question'],
-  ['Séance YouTube', 'Story'],
-  ['Photo'],
-  ['Vidéo courte'],
+// Champs dont la modification remet un contenu généré en attente de relecture
+const CONTENT_KEYS = [
+  'brief', 'caption', 'image_prompt', 'thumbnail_prompt', 'first_comment',
+  'tags', 'script', 'slides', 'media_urls', 'video_url',
 ];
 
 const isoOf = (d) => d.toISOString().slice(0, 10);
@@ -109,45 +107,6 @@ async function loadThemes(req) {
   return Object.fromEntries((data || []).map((t) => [t.week, t.title]));
 }
 
-async function ensureBlock(req, start, startWeek) {
-  const end = addDays(start, 27);
-  const { data: existing, error: eErr } = await req.db
-    .from('editorial_posts')
-    .select('post_date, format, platform')
-    .eq('owner_id', req.ownerId)
-    .eq('is_adhoc', false)
-    .gte('post_date', start)
-    .lte('post_date', end);
-  if (eErr) throw new Error(eErr.message);
-
-  const have = new Set((existing || []).map((p) => `${p.post_date}|${p.format}|${p.platform}`));
-  const rows = [];
-
-  for (let i = 0; i < 4; i++) {
-    const weekNum = ((startWeek - 1 + i) % 13) + 1;
-    for (let d = 0; d < 7; d++) {
-      const post_date = addDays(start, i * 7 + d);
-      for (const format of DAY_TEMPLATE[d]) {
-        if (have.has(`${post_date}|${format}|instagram`)) continue;
-        rows.push({
-          owner_id: req.ownerId,
-          post_date,
-          week_num: weekNum,
-          day_index: d,
-          format,
-          platform: 'instagram',
-          status: 'brouillon',
-          is_adhoc: false,
-        });
-      }
-    }
-  }
-
-  if (rows.length === 0) return;
-  const { error } = await req.db.from('editorial_posts').insert(rows);
-  if (error) throw new Error(error.message);
-}
-
 async function loadPost(req, id) {
   const { data, error } = await req.db
     .from('editorial_posts')
@@ -158,6 +117,11 @@ async function loadPost(req, id) {
   if (error) throw new Error(error.message);
   return data;
 }
+
+// Une valeur vide et une valeur absente sont équivalentes : évite une relecture inutile
+const emptyish = (v) => v === null || v === undefined || v === '' || (Array.isArray(v) && v.length === 0);
+const sameContent = (a, b) =>
+  JSON.stringify(emptyish(a) ? null : a) === JSON.stringify(emptyish(b) ? null : b);
 
 router.get('/themes', async (req, res) => {
   try {
@@ -213,7 +177,7 @@ router.get('/posts', async (req, res) => {
   if (block.error) return res.status(400).json({ success: false, error: block.error });
 
   try {
-    await ensureBlock(req, block.start, block.startWeek);
+    await ensureBlock(req.db, req.ownerId, block.start, block.startWeek);
     const end = addDays(block.start, 27);
 
     const { data, error } = await req.db
@@ -283,7 +247,33 @@ router.put('/posts/:id', async (req, res) => {
   if (b.brief !== undefined) patch.brief = String(b.brief).slice(0, 5000);
   if (b.caption !== undefined) patch.caption = String(b.caption).slice(0, 2200);
   if (b.image_prompt !== undefined) patch.image_prompt = String(b.image_prompt).slice(0, 1000);
+  if (b.thumbnail_prompt !== undefined) patch.thumbnail_prompt = String(b.thumbnail_prompt).slice(0, 1000);
   if (b.first_comment !== undefined) patch.first_comment = String(b.first_comment).slice(0, 2200);
+  if (b.script !== undefined) patch.script = String(b.script).slice(0, 10000);
+
+  if (b.slides !== undefined) {
+    if (!Array.isArray(b.slides)) {
+      return res.status(400).json({ success: false, error: 'Slides : liste attendue.' });
+    }
+    // Les diapositives vides (champs laissés à blanc dans l'éditeur) ne sont pas conservées
+    patch.slides = b.slides.map((s) => String(s).trim().slice(0, 300)).filter(Boolean).slice(0, 8);
+  }
+
+  if (b.media_urls !== undefined) {
+    if (!Array.isArray(b.media_urls) || b.media_urls.length > 10
+      || b.media_urls.some((u) => !HTTPS_RE.test(String(u)))) {
+      return res.status(400).json({ success: false, error: 'Médias : 10 images https maximum.' });
+    }
+    patch.media_urls = b.media_urls.map((u) => String(u).slice(0, 500));
+  }
+
+  if (b.video_url !== undefined) {
+    const v = String(b.video_url || '').trim();
+    if (v && !HTTPS_RE.test(v)) {
+      return res.status(400).json({ success: false, error: 'Vidéo : URL https attendue.' });
+    }
+    patch.video_url = v.slice(0, 500) || null;
+  }
 
   if (b.tags !== undefined) {
     if (!Array.isArray(b.tags) || b.tags.length > 30) {
@@ -299,12 +289,49 @@ router.put('/posts/:id', async (req, res) => {
   if (Object.keys(patch).length === 0) {
     return res.status(400).json({ success: false, error: 'Aucune donnée à enregistrer.' });
   }
-  patch.updated_at = new Date().toISOString();
 
   try {
+    const current = await loadPost(req, req.params.id);
+    if (!current || current.status === 'publie') {
+      return res.status(404).json({ success: false, error: 'Publication introuvable ou déjà publiée.' });
+    }
+
+    // Toute modification d'un contenu généré doit être relue à nouveau
+    if (current.ai_generated_at && CONTENT_KEYS.some((k) => k in patch && !sameContent(patch[k], current[k]))) {
+      patch.reviewed_at = null;
+    }
+    patch.updated_at = new Date().toISOString();
+
     const { data, error } = await req.db
       .from('editorial_posts')
       .update(patch)
+      .eq('id', req.params.id)
+      .eq('owner_id', req.ownerId)
+      .neq('status', 'publie')
+      .select()
+      .maybeSingle();
+    if (error) return res.status(500).json({ success: false, error: error.message });
+    if (!data) return res.status(404).json({ success: false, error: 'Publication introuvable ou déjà publiée.' });
+    res.json({ success: true, post: data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// La relecture humaine débloque programmation et publication
+router.post('/posts/:id/validate', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
+
+  try {
+    const post = await loadPost(req, req.params.id);
+    if (!post || post.status === 'publie') {
+      return res.status(404).json({ success: false, error: 'Publication introuvable ou déjà publiée.' });
+    }
+
+    const now = new Date().toISOString();
+    const { data, error } = await req.db
+      .from('editorial_posts')
+      .update({ reviewed_at: now, updated_at: now })
       .eq('id', req.params.id)
       .eq('owner_id', req.ownerId)
       .neq('status', 'publie')
@@ -367,6 +394,9 @@ router.post('/posts/:id/schedule', async (req, res) => {
     if (!post.caption?.trim()) {
       return res.status(400).json({ success: false, error: 'Rédigez la légende avant de programmer.' });
     }
+    if (post.ai_generated_at && !post.reviewed_at) {
+      return res.status(409).json({ success: false, error: 'Validez le contenu généré avant de programmer ou publier.' });
+    }
 
     const { data, error } = await req.db
       .from('editorial_posts')
@@ -392,6 +422,9 @@ router.post('/posts/:id/publish-now', async (req, res) => {
     if (!post.caption?.trim()) {
       return res.status(400).json({ success: false, error: 'Rédigez la légende avant de publier.' });
     }
+    if (post.ai_generated_at && !post.reviewed_at) {
+      return res.status(409).json({ success: false, error: 'Validez le contenu généré avant de programmer ou publier.' });
+    }
 
     const now = new Date().toISOString();
     const { data, error } = await req.db
@@ -406,7 +439,7 @@ router.post('/posts/:id/publish-now', async (req, res) => {
     res.status(202).json({
       success: true,
       post: data,
-      message: "Publication enregistrée pour envoi immédiat.",
+      message: 'Publication enregistrée pour envoi immédiat.',
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
