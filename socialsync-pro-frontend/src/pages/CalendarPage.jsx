@@ -77,10 +77,12 @@ export default function CalendarPage({ notify }) {
   const [editingWeek, setEditingWeek] = useState(null);
   const [draftTitle, setDraftTitle] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(null);
   const [adding, setAdding] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const r = await api.calendar.posts(start, month.startWeek);
       setPosts(r.posts || []);
@@ -88,11 +90,13 @@ export default function CalendarPage({ notify }) {
       setIsDefault(Boolean(r.isDefault));
       setTimezone(r.timezone || 'Europe/Paris');
     } catch (e) {
-      notify(e.message);
+      // Message persistant : un calendrier vide sans explication est trompeur
+      setLoadError(e.message);
+      setPosts([]);
     } finally {
       setLoading(false);
     }
-  }, [start, month.startWeek, notify]);
+  }, [start, month.startWeek]);
 
   useEffect(() => {
     setSelectedId(null);
@@ -177,6 +181,18 @@ export default function CalendarPage({ notify }) {
           />
         </div>
       </div>
+
+      {loadError && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <span>Impossible de charger le calendrier : {loadError}</span>
+          <button
+            onClick={load}
+            className="px-3 py-1.5 rounded-lg bg-white border border-red-200 text-red-700 font-bold hover:bg-red-100 shrink-0"
+          >
+            Réessayer
+          </button>
+        </div>
+      )}
 
       {isDefault && isOwner && (
         <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl">
