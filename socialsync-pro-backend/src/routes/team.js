@@ -8,7 +8,8 @@ dotenv.config();
 const router = express.Router();
 
 const ROLES = ['Community Manager', 'Éditeur', 'Relecteur / Client'];
-const APP_URL = process.env.APP_URL || 'https://social-sync-pro.vercel.app';
+// Pas de repli : sans APP_URL, le lien d'invitation serait faux.
+const APP_URL = String(process.env.APP_URL || '').trim().replace(/\/+$/, '');
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_NAME = 120;
@@ -37,6 +38,10 @@ const serverError = (res, where, err) => {
 };
 
 async function sendInvitationEmail(invitation, ownerName) {
+  if (!APP_URL) {
+    return { sent: false, reason: "APP_URL absente sur le serveur : lien d'invitation impossible." };
+  }
+
   if (!emailConfigured()) {
     return { sent: false, reason: 'Envoi e-mail non configuré : RESEND_API_KEY absente sur le serveur.' };
   }
