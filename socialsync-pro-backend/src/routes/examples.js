@@ -1,0 +1,58 @@
+// socialsync-pro-backend/src/routes/examples.js
+import express from 'express';
+import { requireOwner } from '../middleware/auth.js';
+
+const router = express.Router();
+
+const FORMATS = ['Photo', 'Carrousel', 'Vidéo courte', 'Séance YouTube', 'Story', 'Question', 'Live'];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const clip = (v, max) => String(v ?? '').trim().slice(0, max);
+
+// GET /api/examples : exemples de l'espace
+router.get('/', requireOwner, async (req, res) => {
+  const { data, error } = await req.db
+    .from('content_examples')
+    .select('*')
+    .eq('owner_id', req.ownerId)
+    .order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  res.json({ success: true, examples: data || [] });
+});
+
+// POST /api/examples : ajoute un exemple
+router.post('/', requireOwner, async (req, res) => {
+  const b = req.body || {};
+  const format = String(b.format || '');
+  if (!FORMATS.includes(format)) return res.status(400).json({ success: false, error: 'Format invalide.' });
+
+  const row = {
+    owner_id: req.ownerId,
+    format,
+    title: clip(b.title, 200),
+    caption: clip(b.caption, 2200),
+    image_prompt: clip(b.image_prompt, 2000),
+    script: clip(b.script, 40000),
+    note: clip(b.note, 500),
+  };
+  if (!row.caption && !row.script && !row.image_prompt) {
+    return res.status(400).json({ success: false, error: 'Renseignez au moins une légende, un prompt ou un script.' });
+  }
+
+  const { data, error } = await req.db.from('content_examples').insert([row]).select().single();
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  res.status(201).json({ success: true, example: data });
+});
+
+// DELETE /api/examples/:id
+router.delete('/:id', requireOwner, async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
+  const { error } = await req.db
+    .from('content_examples')
+    .delete()
+    .eq('id', req.params.id)
+    .eq('owner_id', req.ownerId);
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  res.json({ success: true });
+});
+
+export default router;
