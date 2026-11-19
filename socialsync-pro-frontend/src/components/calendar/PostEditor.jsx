@@ -11,7 +11,8 @@ const PLATFORMS = [
 
 const SUGGESTED_TAGS = ['@followers', '@everyone'];
 const MAX_TAGS = 30;
-const ACCEPTED_IMAGE_TYPES = 'image/png, image/jpeg, image/jpg, image/webp';
+// Instagram n'accepte que le JPEG pour les images publiées via l'API
+const ACCEPTED_IMAGE_TYPES = 'image/jpeg, image/jpg';
 
 const toForm = (post) => ({
   brief: post.brief || '',
@@ -19,7 +20,7 @@ const toForm = (post) => ({
   image_prompt: post.image_prompt || '',
   thumbnail_prompt: post.thumbnail_prompt || '',
   script: post.script || '',
-  slides: post.slides || [''],
+  slides: post.slides?.length ? post.slides : [''],
   media_urls: post.media_urls || [],
   video_url: post.video_url || '',
   tags: post.tags || [],
@@ -56,12 +57,14 @@ export default function PostEditor({
     toLocalInputValue(new Date(Date.now() + 60 * 60 * 1000), ownerTimezone || 'Europe/Paris')
   );
   const [busy, setBusy] = useState(false);
-  const [, setUploadingMedia] = useState(false);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
 
   const readOnly = post.status === 'publie';
   const canDelete = post.is_adhoc && !readOnly;
   const isVideo = ['Vidéo courte', 'Séance YouTube', 'Live'].includes(post.format);
   const isCarrousel = post.format === 'Carrousel';
+  // Contenu généré par l'IA et pas encore relu : bloque programmation et publication
+  const needsReview = Boolean(post.ai_generated_at && !post.reviewed_at);
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -97,11 +100,9 @@ export default function PostEditor({
 
     setUploadingMedia(true);
     try {
-      const uploadPromises = files.map(async (file, idx) => {
-        const path = `posts/${post.id}/media_${Date.now()}_${idx}`;
-        return await uploadFile('media', path, file);
-      });
-      const urls = await Promise.all(uploadPromises);
+      const urls = await Promise.all(
+        files.map((file, idx) => uploadFile('media', `posts/${post.id}/media_${Date.now()}_${idx}`, file))
+      );
       set('media_urls', [...form.media_urls, ...urls]);
       notify('Images ajoutées avec succès.');
     } catch (err) {
@@ -121,8 +122,7 @@ export default function PostEditor({
     if (!file) return;
     setUploadingMedia(true);
     try {
-      const path = `posts/${post.id}/video_${Date.now()}`;
-      const url = await uploadFile('videos', path, file);
+      const url = await uploadFile('videos', `posts/${post.id}/video_${Date.now()}`, file);
       set('video_url', url);
       notify('Vidéo synchronisée.');
     } catch (err) {
@@ -165,6 +165,15 @@ export default function PostEditor({
     withBusy(async () => {
       await save();
       notify('Publication enregistrée.');
+    });
+
+  const onValidate = () =>
+    withBusy(async () => {
+      // On enregistre d'abord les modifications, puis on valide la version affichée
+      await save();
+      const r = await api.calendar.validate(post.id);
+      onUpdated(r.post);
+      notify('Contenu validé.');
     });
 
   const onGenerateCaption = () =>
@@ -248,6 +257,26 @@ export default function PostEditor({
         </button>
       </div>
 
+      {/* Bandeau de relecture */}
+      {needsReview && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold text-amber-900">Contenu généré par l'IA, à relire</p>
+            <p className="text-[11px] text-amber-800">
+              Vérifiez le texte, le ton et les faits avant de valider. Toute modification demandera une nouvelle validation.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onValidate}
+            disabled={busy || readOnly}
+            className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow hover:bg-emerald-800 shrink-0 disabled:opacity-50"
+          >
+            Valider le contenu
+          </button>
+        </div>
+      )}
+
       {/* Onglets horizontaux des réseaux sociaux */}
       <div className="space-y-2">
         <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">Réseau social cible</label>
@@ -283,17 +312,17 @@ export default function PostEditor({
         />
       </section>
 
-      {/* SECTION TÉLÉVERSEMENT MÉDIAS / FICHIERS */}
+      {/* Médias / vidéo */}
       {!isVideo ? (
         <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
           <div className="flex items-center justify-between">
             <div>
               <label className="text-xs font-bold uppercase tracking-wider text-stone-800 block">Médias associés (Images)</label>
-              <span className="text-[10px] text-stone-500">Formats : PNG, JPEG, JPG, WEBP (Max 10)</span>
+              <span className="text-[10px] text-stone-500">Format JPEG recommandé pour Instagram (Max 10)</span>
             </div>
             {!readOnly && form.media_urls.length < 10 && (
-              <label className="px-3 py-1.5 bg-stone-900 text-amber-200 text-xs font-bold rounded-xl cursor-pointer shadow hover:bg-stone-800">
-                📁 Ajouter des images
+              <label className={`px-3 py-1.5 bg-stone-900 text-amber-200 text-xs font-bold rounded-xl cursor-pointer shadow hover:bg-stone-800 ${uploadingMedia ? 'opacity-50 pointer-events-none' : ''}`}>
+                📁 {uploadingMedia ? 'Envoi...' : 'Ajouter des images'}
                 <input type="file" multiple accept={ACCEPTED_IMAGE_TYPES} className="hidden" onChange={handleImageUpload} />
               </label>
             )}
@@ -321,16 +350,14 @@ export default function PostEditor({
         <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
-              <label className="text-xs font-bold uppercase tracking-wider text-stone-800 block">
-                Vidéo associée
-              </label>
+              <label className="text-xs font-bold uppercase tracking-wider text-stone-800 block">Vidéo associée</label>
               <span className="text-[10px] text-stone-500">
                 {post.format === 'Vidéo courte' ? 'Format vertical 9:16 recommandé' : 'Format horizontal 16:9 recommandé'}
               </span>
             </div>
             {!readOnly && (
-              <label className="px-3 py-1.5 bg-stone-900 text-amber-200 text-xs font-bold rounded-xl cursor-pointer shadow hover:bg-stone-800">
-                🎬 Sélectionner / Upload
+              <label className={`px-3 py-1.5 bg-stone-900 text-amber-200 text-xs font-bold rounded-xl cursor-pointer shadow hover:bg-stone-800 ${uploadingMedia ? 'opacity-50 pointer-events-none' : ''}`}>
+                🎬 {uploadingMedia ? 'Envoi...' : 'Sélectionner / Upload'}
                 <input type="file" accept="video/*" className="hidden" onChange={handleVideoUpload} />
               </label>
             )}
@@ -348,7 +375,7 @@ export default function PostEditor({
         </section>
       )}
 
-      {/* SECTION SLIDES POUR CARROUSEL */}
+      {/* Slides du carrousel */}
       {isCarrousel && (
         <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
           <div className="flex items-center justify-between">
@@ -380,7 +407,7 @@ export default function PostEditor({
         </section>
       )}
 
-      {/* SECTION SCRIPT POUR VIDÉOS */}
+      {/* Script de vidéo */}
       {isVideo && (
         <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -405,7 +432,7 @@ export default function PostEditor({
         </section>
       )}
 
-      {/* Légende avec bouton Générer épuré et Copier */}
+      {/* Légende */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">Légende à publier</label>
@@ -439,17 +466,17 @@ export default function PostEditor({
         <span className="text-[10px] text-stone-500">{form.caption.length} / 2200 caractères</span>
       </section>
 
-      {/* Prompt Image / Miniature */}
+      {/* Prompt image / miniature */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="block text-xs font-bold uppercase tracking-wider text-stone-600">
-            {isVideo ? 'Prompt Miniature' : 'Prompt Image'}
+            {isVideo ? 'Prompt miniature' : 'Prompt image'}
           </label>
           <div className="flex gap-2">
-            <button onClick={onGeneratePrompt} disabled={busy || readOnly} type="button" className="bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-[#E8DFC9]">
+            <button onClick={onGeneratePrompt} disabled={busy || readOnly} type="button" className="bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-[#E8DFC9] disabled:opacity-50">
               Suggérer 💡
             </button>
-            <button onClick={() => onCopyText(isVideo ? form.thumbnail_prompt : form.image_prompt, 'Prompt')} disabled={!(isVideo ? form.thumbnail_prompt : form.image_prompt)} type="button" className="bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-[#E8DFC9]">
+            <button onClick={() => onCopyText(isVideo ? form.thumbnail_prompt : form.image_prompt, 'Prompt')} disabled={!(isVideo ? form.thumbnail_prompt : form.image_prompt)} type="button" className="bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-[#E8DFC9] disabled:opacity-50">
               Copier
             </button>
           </div>
@@ -518,7 +545,7 @@ export default function PostEditor({
         />
       </section>
 
-      {/* Actions de programmation alignées de manière fluide et rigoureuse */}
+      {/* Actions */}
       {!readOnly && (
         <section className="border-t border-[#E2D5C3] pt-4 flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-1">
@@ -529,7 +556,8 @@ export default function PostEditor({
               type="datetime-local"
               value={scheduleAt}
               onChange={(e) => setScheduleAt(e.target.value)}
-              className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-2.5 text-xs font-bold text-stone-800 focus:outline-none"
+              disabled={needsReview}
+              className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-2.5 text-xs font-bold text-stone-800 focus:outline-none disabled:opacity-50"
             />
           </div>
 
@@ -548,10 +576,22 @@ export default function PostEditor({
               </button>
             ) : (
               <>
-                <button onClick={onPublishNow} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow hover:bg-emerald-800 whitespace-nowrap">
+                <button
+                  onClick={onPublishNow}
+                  disabled={busy || needsReview}
+                  type="button"
+                  title={needsReview ? 'Validez le contenu avant de publier' : undefined}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow hover:bg-emerald-800 whitespace-nowrap disabled:opacity-50"
+                >
                   Publier maintenant
                 </button>
-                <button onClick={onSchedule} disabled={busy} type="button" className="px-4 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow hover:bg-stone-800 whitespace-nowrap">
+                <button
+                  onClick={onSchedule}
+                  disabled={busy || needsReview}
+                  type="button"
+                  title={needsReview ? 'Validez le contenu avant de programmer' : undefined}
+                  className="px-4 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow hover:bg-stone-800 whitespace-nowrap disabled:opacity-50"
+                >
                   Programmer
                 </button>
               </>
