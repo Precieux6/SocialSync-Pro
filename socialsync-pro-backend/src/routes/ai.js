@@ -3,6 +3,8 @@ import express from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 import rateLimit from 'express-rate-limit';
 import { decryptSecret } from '../utils/crypto.js';
+import { requireRole } from '../middleware/auth.js';
+import { runContentAutomation } from '../services/contentPlanner.js';
 
 const router = express.Router();
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
@@ -103,5 +105,34 @@ router.post('/generate-prompt', (req, res) => {
     prompt: `Crée un visuel symbolique haut de gamme pour le thème : "${theme}". Format ${format}.`,
   });
 });
+
+// POST /api/ai/generate-now : lance le cycle de rédaction pour l'espace courant (une semaine par appel)
+router.post(
+  '/generate-now',
+  requireRole('Propriétaire', 'Éditeur', 'Community Manager'),
+  async (req, res) => {
+    try {
+      const cfg = await loadSpaceAiConfig(req);
+      if (cfg.error) return res.status(400).json({ success: false, error: cfg.error });
+      if (!cfg.reference) {
+        return res.status(400).json({ success: false, error: 'Importez le calendrier de référence avant de générer.' });
+      }
+
+      const result = await runContentAutomation({
+        db: req.db,
+        ownerId: req.ownerId,
+        apiKey: cfg.apiKey,
+        reference: cfg.reference,
+      });
+      res.json({ success: true, ...result });
+    } catch (err) {
+      if (err?.status === 401) {
+        return res.status(400).json({ success: false, error: 'La clé Claude de cet espace est refusée par Anthropic.' });
+      }
+      console.error('generate-now :', err);
+      res.status(500).json({ success: false, error: 'Erreur lors de la génération.' });
+    }
+  }
+);
 
 export default router;
