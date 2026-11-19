@@ -18,11 +18,30 @@ export const addDays = (iso, n) => {
   return d.toISOString().slice(0, 10);
 };
 
+// Lundi de la semaine qui contient la date donnée
+export const mondayOf = (iso) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+};
+
 // Premier lundi du mois, et semaine de départ associée
 export function blockFor(year, monthIndex) {
   const first = new Date(Date.UTC(year, monthIndex, 1));
   first.setUTCDate(first.getUTCDate() + ((1 - first.getUTCDay() + 7) % 7));
   return { start: first.toISOString().slice(0, 10), startWeek: START_WEEK[monthIndex] };
+}
+
+// Numéro de semaine (1 à 13) d'un lundi, selon le bloc du mois auquel il appartient.
+// Retourne null si le lundi n'appartient à aucun bloc (dernière semaine partielle).
+export function weekNumOf(monday) {
+  const d = new Date(`${monday}T00:00:00Z`);
+  const { start, startWeek } = blockFor(d.getUTCFullYear(), d.getUTCMonth());
+  const i = Math.round(
+    (Date.parse(`${monday}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / (7 * 864e5)
+  );
+  if (i < 0 || i > 3) return null;
+  return ((startWeek - 1 + i) % 13) + 1;
 }
 
 export async function ensureBlock(db, ownerId, start, startWeek) {
