@@ -5,6 +5,7 @@ import { addDays, blockFor, ensureBlock, mondayOf } from './calendarBlocks.js';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const MAX_POSTS_PER_CALL = 10; // une semaine complète du gabarit compte exactement 10 publications
 const WRITE_HORIZON_DAYS = 9;  // une semaine est rédigée lorsque son lundi tombe dans les 9 prochains jours
+const MAX_ATTEMPTS = 2;        // un second essai en cas de JSON invalide ou de réponse tronquée
 const TAG_RE = /^[@#]?[\p{L}\p{N}_.\-]{1,50}$/u;
 
 export const PLANNER_SYSTEM = `
@@ -31,14 +32,24 @@ Règles :
   ]
 }
 Par format : Photo, Story et Question : légende + prompt visuel. Carrousel : 3 à 8 diapositives + légende + prompt visuel. Vidéo courte : script de 30 à 60 secondes + légende + prompt de miniature. Séance YouTube et Live : plan et texte parlé détaillés + légende.
+
+Contraintes techniques impératives :
+- Le JSON doit être strictement valide : aucune virgule finale, aucun commentaire.
+- Dans les textes, n'utilisez jamais le guillemet droit ("). Remplacez-le par « et ».
+- Légende de 300 caractères maximum, sauf pour les formats Vidéo courte, Séance YouTube et Live.
 `;
 
+// Extrait et parse le JSON de la réponse. Lève une erreur explicite si le JSON est invalide.
 function parseJson(text) {
-  const cleaned = text.replace(/```json|```/g, '');
+  const cleaned = text.replace(/```json|```/g, '').trim();
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
   if (start === -1 || end === -1) throw new Error('Réponse de Claude sans JSON.');
-  return JSON.parse(cleaned.slice(start, end + 1));
+  try {
+    return JSON.parse(cleaned.slice(start, end + 1));
+  } catch (err) {
+    throw new Error(`JSON invalide renvoyé par Claude : ${err.message}`);
+  }
 }
 
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
@@ -51,16 +62,31 @@ export async function generateWeek({ apiKey, reference, theme, posts }) {
       ? [{ type: 'text', text: `CALENDRIER DE RÉFÉRENCE :\n${reference}`, cache_control: { type: 'ephemeral' } }]
       : []),
   ];
+  const userContent = JSON.stringify({ theme, publications: posts });
 
-  const response = await anthropic.messages.create({
-    model: CLAUDE_MODEL,
-    max_tokens: 16000,
-    system,
-    messages: [{ role: 'user', content: JSON.stringify({ theme, publications: posts }) }],
-  });
+  let lastError = new Error('Aucune réponse de Claude.');
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const response = await anthropic.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 16000,
+      system,
+      messages: [{ role: 'user', content: userContent }],
+    });
 
-  const text = response.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-  return parseJson(text);
+    // Réponse coupée par la limite de tokens : inutile de tenter le parsing
+    if (response.stop_reason === 'max_tokens') {
+      lastError = new Error('Réponse tronquée (limite de tokens atteinte).');
+      continue;
+    }
+
+    const text = response.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+    try {
+      return parseJson(text);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
 }
 
 // Rédige la semaine qui commence au lundi weekStart (uniquement les posts non encore générés)
