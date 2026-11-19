@@ -10,12 +10,30 @@ const Empty = ({ children }) => (
   </div>
 );
 
+const STATE_STYLE = {
+  attente: { label: 'Rédaction en attente', cls: 'bg-stone-100 text-stone-600 border-stone-200' },
+  a_valider: { label: 'À valider', cls: 'bg-amber-100 text-amber-800 border-amber-200' },
+  valide: { label: 'Validé', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+};
+
+const dateFr = (iso) =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString('fr-FR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    timeZone: 'UTC',
+  });
+
+const wordCount = (text) => (text || '').trim().split(/\s+/).filter(Boolean).length;
+
 export function ToFilmPage({ notify }) {
   const [videos, setVideos] = useState(null);
   const [active, setActive] = useState(null);
 
   useEffect(() => {
-    api.videos.toFilm().then((r) => setVideos(r.videos)).catch((e) => { notify(e.message); setVideos([]); });
+    api.videos.toFilm()
+      .then((r) => setVideos(r.videos || []))
+      .catch((e) => { notify(e.message); setVideos([]); });
   }, [notify]);
 
   if (!videos) return <p className="text-xs text-stone-500">Chargement...</p>;
@@ -27,28 +45,41 @@ export function ToFilmPage({ notify }) {
           <i className="fa-solid fa-clapperboard text-gold-600"></i>
           <span>Vidéos à tourner ({videos.length})</span>
         </h2>
+        <p className="text-xs text-stone-500">
+          Triées par date de publication. Une vidéo est rédigée environ une semaine avant sa date.
+        </p>
       </div>
 
       {videos.length === 0 ? (
         <Empty>Aucune vidéo en attente de tournage.</Empty>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {videos.map((v) => (
-            <div key={v.id} className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-3xl p-6 space-y-3 shadow-sm flex flex-col justify-between">
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-2">
-                  {v.format && <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-700 text-white">{v.format}</span>}
-                  {v.duration && <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#F4EFE6] text-stone-700 border border-[#E2D5C3]">{v.duration}</span>}
-                  {v.status && <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">{v.status}</span>}
+          {videos.map((v) => {
+            const state = STATE_STYLE[v.content_state] || STATE_STYLE.attente;
+            return (
+              <div key={v.id} className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-3xl p-6 space-y-3 shadow-sm flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-700 text-white">{v.format}</span>
+                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${state.cls}`}>{state.label}</span>
+                  </div>
+                  <p className="text-sm font-serif font-bold text-stone-900 leading-snug line-clamp-3">{v.title}</p>
+                  <p className="text-xs text-stone-500 capitalize">{dateFr(v.release_date)}</p>
+                  <p className="text-[11px] text-stone-500">
+                    {v.script ? `Script : ${wordCount(v.script)} mots` : 'Script non encore rédigé'}
+                  </p>
                 </div>
-                <p className="text-sm font-serif font-bold text-stone-900 leading-snug">{v.title}</p>
-                {v.release_date && <p className="text-xs text-stone-500">Sortie : {v.release_date}</p>}
+                <div className="pt-3 border-t border-[#E2D5C3] text-right">
+                  <button
+                    onClick={() => setActive(v)}
+                    className="font-bold text-gold-700 hover:text-stone-900 text-xs"
+                  >
+                    Consulter le script &gt;
+                  </button>
+                </div>
               </div>
-              <div className="pt-3 border-t border-[#E2D5C3] text-right">
-                <button onClick={() => setActive(v)} className="font-bold text-gold-700 hover:text-stone-900 text-xs">Consulter le script &gt;</button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -60,7 +91,7 @@ export function ToFilmPage({ notify }) {
               <button onClick={() => setActive(null)} className="text-stone-400 hover:text-stone-900 text-xl px-2">×</button>
             </div>
             <div className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-4 text-xs whitespace-pre-line max-h-96 overflow-y-auto leading-relaxed">
-              {active.script || 'Aucun script enregistré pour cette vidéo.'}
+              {active.script || "Le script n'est pas encore rédigé. Il sera généré environ une semaine avant la date de publication."}
             </div>
           </div>
         </div>
