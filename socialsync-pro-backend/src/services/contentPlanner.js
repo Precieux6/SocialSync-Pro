@@ -1,9 +1,10 @@
 // socialsync-pro-backend/src/services/contentPlanner.js
 import Anthropic from '@anthropic-ai/sdk';
-import { addDays } from './calendarBlocks.js';
+import { addDays, blockFor, ensureBlock, mondayOf } from './calendarBlocks.js';
 
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
-const MAX_POSTS_PER_CALL = 10; // une semaine complète tient en un appel
+const MAX_POSTS_PER_CALL = 10; // une semaine complète du gabarit compte exactement 10 publications
+const WRITE_HORIZON_DAYS = 9;  // une semaine est rédigée lorsque son lundi tombe dans les 9 prochains jours
 const TAG_RE = /^[@#]?[\p{L}\p{N}_.\-]{1,50}$/u;
 
 export const PLANNER_SYSTEM = `
@@ -81,12 +82,12 @@ export async function planWeek({ db, ownerId, apiKey, reference, weekStart }) {
   const todo = (posts || []).filter((p) => !p.ai_generated_at && !p.caption?.trim());
   if (todo.length === 0) return { weekStart, requested: 0, generated: 0 };
 
-  const weekNum = todo[0].week_num;
+  // Thème saisi pour cette semaine (indexé par date de début de semaine)
   const { data: themeRow } = await db
     .from('weeks_themes')
     .select('title')
     .eq('owner_id', ownerId)
-    .eq('week', weekNum)
+    .eq('week_start', weekStart)
     .maybeSingle();
   const theme = themeRow?.title?.trim() || null;
 
@@ -104,17 +105,28 @@ export async function planWeek({ db, ownerId, apiKey, reference, weekStart }) {
     })),
   });
 
-  // Thème : enregistré seulement s'il n'existait pas encore
+  // Thème absent : Claude en propose un, enregistré comme généré (un thème saisi à la main le remplace)
   if (!theme && plan.theme_title) {
     const title = str(plan.theme_title, 200);
-    const { data: updated } = await db
-      .from('weeks_themes')
-      .update({ title, ai_generated: true })
-      .eq('owner_id', ownerId)
-      .eq('week', weekNum)
-      .select('week');
-    if (!updated?.length) {
-      await db.from('weeks_themes').insert([{ owner_id: ownerId, user_id: ownerId, week: weekNum, title, ai_generated: true }]);
+    if (title) {
+      const weekNum = todo[0].week_num;
+      const { data: updated } = await db
+        .from('weeks_themes')
+        .update({ title, ai_generated: true })
+        .eq('owner_id', ownerId)
+        .eq('week_start', weekStart)
+        .select('week_start');
+      if (!updated?.length) {
+        const { error: iErr } = await db.from('weeks_themes').insert([{
+          owner_id: ownerId,
+          user_id: ownerId,
+          week_start: weekStart,
+          week: weekNum,
+          title,
+          ai_generated: true,
+        }]);
+        if (iErr) throw new Error(iErr.message);
+      }
     }
   }
 
@@ -157,22 +169,16 @@ export async function planWeek({ db, ownerId, apiKey, reference, weekStart }) {
     if (!uErr) generated += 1;
   }
 
-  return { weekStart, weekNum, requested: batch.length, generated, remaining: todo.length - batch.length };
+  return { weekStart, requested: batch.length, generated, remaining: todo.length - batch.length };
 }
 
-const mondayOf = (iso) => {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-  return d.toISOString().slice(0, 10);
-};
-
-// Cycle complet d'un espace : crée les blocs, puis rédige la première semaine incomplète
+// Cycle complet d'un espace : crée les blocs du mois courant et du suivant, puis rédige
+// une semaine dont le lundi tombe dans les WRITE_HORIZON_DAYS prochains jours
 export async function runContentAutomation({ db, ownerId, apiKey, reference }) {
-  const { blockFor, ensureBlock } = await import('./calendarBlocks.js');
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
+  const horizon = addDays(today, WRITE_HORIZON_DAYS);
 
-  // Mois courant et suivant : sinon rien n'existe tant que personne n'ouvre le calendrier
   const y = now.getUTCFullYear();
   const m = now.getUTCMonth();
   for (const [yy, mm] of [[y, m], m === 11 ? [y + 1, 0] : [y, m + 1]]) {
@@ -192,7 +198,9 @@ export async function runContentAutomation({ db, ownerId, apiKey, reference }) {
     .limit(300);
   if (error) throw new Error(error.message);
 
-  const weeks = [...new Set((data || []).map((r) => mondayOf(r.post_date)))];
+  const weeks = [...new Set((data || []).map((r) => mondayOf(r.post_date)))]
+    .filter((w) => w <= horizon)
+    .sort();
 
   for (const weekStart of weeks) {
     const result = await planWeek({ db, ownerId, apiKey, reference, weekStart });
