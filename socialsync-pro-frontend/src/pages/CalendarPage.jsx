@@ -21,6 +21,17 @@ const STATUS_LABEL = {
   echec: 'Échec',
 };
 
+// Badge d'un post : « À valider » pour un contenu généré et pas encore relu
+const badgeOf = (post) => {
+  if (post.ai_generated_at && !post.reviewed_at && post.status === 'brouillon') {
+    return { label: 'À valider', style: 'bg-amber-100 text-amber-800 border-amber-200' };
+  }
+  return {
+    label: STATUS_LABEL[post.status] || post.status,
+    style: STATUS_STYLE[post.status] || STATUS_STYLE.brouillon,
+  };
+};
+
 function AddPostModal({ date, weekNum, onClose, onCreated, notify }) {
   const [busy, setBusy] = useState(false);
 
@@ -256,33 +267,34 @@ export default function CalendarPage({ notify }) {
 
                 {day.posts.length === 0 && <p className="text-[11px] text-stone-400 italic">Aucune publication</p>}
 
-                {day.posts.map((post) => (
-                  <button
-                    key={post.id}
-                    onClick={() => setSelectedId(post.id)}
-                    className={`w-full text-left rounded-xl border p-2 transition-all ${
-                      selectedId === post.id ? 'border-gold-500 bg-white shadow' : 'border-[#E2D5C3] bg-[#FAF7F2] hover:border-gold-500'
-                    }`}
-                  >
-                    <span className="text-[11px] font-bold text-stone-800 block">
-                      {post.format}{post.is_adhoc ? ' · hors plan' : ''}
-                    </span>
-                    <span className={`inline-block mt-1 text-[9px] font-bold px-2 py-0.5 rounded-full border ${
-                      STATUS_STYLE[post.status] || STATUS_STYLE.brouillon
-                    }`}>
-                      {STATUS_LABEL[post.status] || post.status}
-                    </span>
-                    {post.scheduled_at && post.status === 'programme' && (
-                      <span className="block text-[9px] text-stone-500 mt-1">
-                        {new Date(post.scheduled_at).toLocaleString('fr-FR', {
-                          dateStyle: 'short',
-                          timeStyle: 'short',
-                          timeZone: timezone,
-                        })}
+                {day.posts.map((post) => {
+                  const badge = badgeOf(post);
+                  return (
+                    <button
+                      key={post.id}
+                      onClick={() => setSelectedId(post.id)}
+                      className={`w-full text-left rounded-xl border p-2 transition-all ${
+                        selectedId === post.id ? 'border-gold-500 bg-white shadow' : 'border-[#E2D5C3] bg-[#FAF7F2] hover:border-gold-500'
+                      }`}
+                    >
+                      <span className="text-[11px] font-bold text-stone-800 block">
+                        {post.format}{post.is_adhoc ? ' · hors plan' : ''}
                       </span>
-                    )}
-                  </button>
-                ))}
+                      <span className={`inline-block mt-1 text-[9px] font-bold px-2 py-0.5 rounded-full border ${badge.style}`}>
+                        {badge.label}
+                      </span>
+                      {post.scheduled_at && post.status === 'programme' && (
+                        <span className="block text-[9px] text-stone-500 mt-1">
+                          {new Date(post.scheduled_at).toLocaleString('fr-FR', {
+                            dateStyle: 'short',
+                            timeStyle: 'short',
+                            timeZone: timezone,
+                          })}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             ))}
           </div>
