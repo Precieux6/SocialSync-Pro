@@ -1,10 +1,10 @@
 // socialsync-pro-backend/src/routes/examples.js
 import express from 'express';
 import { requireRole } from '../middleware/auth.js';
+import { FORMATS } from '../config/formats.js';
 
 const router = express.Router();
 
-const FORMATS = ['Photo', 'Carrousel', 'Vidéo courte', 'Séance YouTube', 'Story', 'Question', 'Live'];
 const KINDS = ['legende', 'prompt_image', 'prompt_miniature', 'script_court', 'script_long', 'slides', 'question'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const clip = (v, max) => String(v ?? '').trim().slice(0, max);
