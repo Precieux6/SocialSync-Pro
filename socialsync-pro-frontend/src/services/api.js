@@ -162,6 +162,11 @@ export const api = {
     deletePost: (id) => request(`/calendar/posts/${id}`, { method: 'DELETE' }),
   },
 
+  template: {
+    get: () => request('/template'),
+    save: (days, slots) => request('/template', { method: 'PUT', body: { days, slots } }),
+  },
+
   videos: {
     toFilm: () => request('/videos/to-film'),
   },
