@@ -19,6 +19,7 @@ import internalRoutes from './routes/internal.js';
 import examplesRoutes from './routes/examples.js';
 import remindersRoutes from './routes/reminders.js';
 import authRoutes from './routes/auth.js';
+import templateRoutes from './routes/template.js';
 
 import { requireAuth } from './middleware/auth.js';
 
@@ -109,6 +110,7 @@ app.use('/api/profile', requireAuth, profileRoutes);
 app.use('/api/setup', requireAuth, setupRoutes);
 app.use('/api/account', requireAuth, accountRoutes);
 app.use('/api/examples', requireAuth, examplesRoutes);
+app.use('/api/template', requireAuth, templateRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Route introuvable.' });
