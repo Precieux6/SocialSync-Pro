@@ -41,7 +41,7 @@ const dayOf = (e) => {
   return e.kind === 'prompt_image' ? 'Tous les jours' : null;
 };
 
-export default function ExamplesManager({ notify }) {
+export default function ExamplesManager({ notify, canWrite = true }) {
   const [list, setList] = useState(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState(EMPTY);
@@ -116,75 +116,78 @@ export default function ExamplesManager({ notify }) {
   return (
     <div className="space-y-6">
       <p className="text-xs text-stone-600">
-        Ajoutez autant d'exemples validés que vous voulez. Claude s'inspire des plus récents de chaque type pour le ton,
-        la structure et la longueur. Un prompt image s'applique au jour choisi.
+        {canWrite
+          ? "Ajoutez autant d'exemples validés que vous voulez. Claude s'inspire des plus récents de chaque type pour le ton, la structure et la longueur. Un prompt image s'applique au jour choisi."
+          : 'Ces exemples guident la rédaction de Claude. Vous pouvez les consulter.'}
       </p>
 
-      <div className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-2xl p-5 space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Type d'exemple</label>
-            <select className={input} value={form.kind} onChange={(e) => setKind(e.target.value)}>
-              {KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Format</label>
-            <select className={input} value={form.format} onChange={(e) => setForm((f) => ({ ...f, format: e.target.value }))}>
-              {formatOptions.map((f) => <option key={f} value={f}>{f}</option>)}
-            </select>
-          </div>
-          {kind.needsDay ? (
+      {canWrite && (
+        <div className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-2xl p-5 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Jour</label>
-              <select className={input} value={form.day} onChange={(e) => setForm((f) => ({ ...f, day: e.target.value }))}>
-                <option value="">Tous les jours</option>
-                {DAYS.map((d, i) => <option key={d} value={String(i)}>{d}</option>)}
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Type d'exemple</label>
+              <select className={input} value={form.kind} onChange={(e) => setKind(e.target.value)}>
+                {KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
               </select>
             </div>
-          ) : (
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Format</label>
+              <select className={input} value={form.format} onChange={(e) => setForm((f) => ({ ...f, format: e.target.value }))}>
+                {formatOptions.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+            {kind.needsDay ? (
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Jour</label>
+                <select className={input} value={form.day} onChange={(e) => setForm((f) => ({ ...f, day: e.target.value }))}>
+                  <option value="">Tous les jours</option>
+                  {DAYS.map((d, i) => <option key={d} value={String(i)}>{d}</option>)}
+                </select>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Titre (facultatif)</label>
+                <input className={input} value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="Ex. Légende du mardi, ton doux" />
+              </div>
+            )}
+          </div>
+
+          {kind.needsDay && (
             <div>
               <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Titre (facultatif)</label>
-              <input className={input} value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="Ex. Légende du mardi, ton doux" />
+              <input className={input} value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="Ex. Visuel du samedi, carte de guidance" />
             </div>
           )}
-        </div>
 
-        {kind.needsDay && (
           <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Titre (facultatif)</label>
-            <input className={input} value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="Ex. Visuel du samedi, carte de guidance" />
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Contenu</label>
+            <textarea
+              rows={kind.rows}
+              className={input}
+              value={form.content}
+              onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
+              placeholder={kind.help}
+            />
+            <p className="text-[10px] text-stone-500 mt-1">{form.content.length} caractères</p>
           </div>
-        )}
 
-        <div>
-          <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Contenu</label>
-          <textarea
-            rows={kind.rows}
-            className={input}
-            value={form.content}
-            onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
-            placeholder={kind.help}
-          />
-          <p className="text-[10px] text-stone-500 mt-1">{form.content.length} caractères</p>
-        </div>
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Note pour Claude (facultatif)</label>
+            <input className={input} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} placeholder="Ex. Ton plus doux, phrases courtes." />
+          </div>
 
-        <div>
-          <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Note pour Claude (facultatif)</label>
-          <input className={input} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} placeholder="Ex. Ton plus doux, phrases courtes." />
+          <div className="flex justify-end">
+            <button
+              onClick={save}
+              disabled={busy}
+              type="button"
+              className="px-5 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow hover:bg-stone-800 disabled:opacity-50"
+            >
+              {busy ? 'Enregistrement...' : 'Ajouter cet exemple'}
+            </button>
+          </div>
         </div>
-
-        <div className="flex justify-end">
-          <button
-            onClick={save}
-            disabled={busy}
-            type="button"
-            className="px-5 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow hover:bg-stone-800 disabled:opacity-50"
-          >
-            {busy ? 'Enregistrement...' : 'Ajouter cet exemple'}
-          </button>
-        </div>
-      </div>
+      )}
 
       <div className="space-y-3">
         <h4 className="font-serif font-bold text-sm text-stone-900">Exemples enregistrés ({list?.length ?? 0})</h4>
@@ -213,9 +216,11 @@ export default function ExamplesManager({ notify }) {
                 )}
                 {e.title && <span className="text-xs font-bold text-stone-900">{e.title}</span>}
               </div>
-              <button onClick={() => remove(e.id)} type="button" className="text-red-600 text-xs font-bold hover:bg-red-50 rounded px-2 py-1 shrink-0">
-                Supprimer
-              </button>
+              {canWrite && (
+                <button onClick={() => remove(e.id)} type="button" className="text-red-600 text-xs font-bold hover:bg-red-50 rounded px-2 py-1 shrink-0">
+                  Supprimer
+                </button>
+              )}
             </div>
             <pre className="whitespace-pre-wrap font-sans text-xs text-stone-700 leading-relaxed max-h-80 overflow-y-auto bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-3">
               {contentOf(e)}
