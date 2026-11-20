@@ -29,12 +29,28 @@ const wordCount = (text) => (text || '').trim().split(/\s+/).filter(Boolean).len
 export function ToFilmPage({ notify }) {
   const [videos, setVideos] = useState(null);
   const [active, setActive] = useState(null);
+  const [busyId, setBusyId] = useState(null);
 
   useEffect(() => {
     api.videos.toFilm()
       .then((r) => setVideos(r.videos || []))
       .catch((e) => { notify(e.message); setVideos([]); });
   }, [notify]);
+
+  const deposer = async (v, file) => {
+    if (!file) return;
+    setBusyId(v.id);
+    try {
+      const url = await uploadFile('videos', `posts/${v.id}/video_${Date.now()}`, file);
+      await api.calendar.updatePost(v.id, { video_url: url });
+      setVideos((list) => list.map((x) => (x.id === v.id ? { ...x, video_url: url } : x)));
+      notify('Vidéo déposée. Les rappels de tournage sont arrêtés pour cette publication.');
+    } catch (e) {
+      notify(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   if (!videos) return <p className="text-xs text-stone-500">Chargement...</p>;
 
@@ -56,12 +72,16 @@ export function ToFilmPage({ notify }) {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {videos.map((v) => {
             const state = STATE_STYLE[v.content_state] || STATE_STYLE.attente;
+            const busy = busyId === v.id;
             return (
               <div key={v.id} className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-3xl p-6 space-y-3 shadow-sm flex flex-col justify-between">
                 <div className="space-y-3">
                   <div className="flex flex-wrap gap-2">
                     <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-700 text-white">{v.format}</span>
                     <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${state.cls}`}>{state.label}</span>
+                    {v.video_url && (
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full border bg-sky-100 text-sky-800 border-sky-200">Vidéo déposée</span>
+                    )}
                   </div>
                   <p className="text-sm font-serif font-bold text-stone-900 leading-snug line-clamp-3">{v.title}</p>
                   <p className="text-xs text-stone-500 capitalize">{dateFr(v.release_date)}</p>
@@ -69,7 +89,22 @@ export function ToFilmPage({ notify }) {
                     {v.script ? `Script : ${wordCount(v.script)} mots` : 'Script non encore rédigé'}
                   </p>
                 </div>
-                <div className="pt-3 border-t border-[#E2D5C3] text-right">
+                <div className="pt-3 border-t border-[#E2D5C3] flex items-center justify-between gap-3">
+                  <label
+                    className={`text-xs font-bold text-stone-800 bg-[#F4EFE6] border border-[#E2D5C3] px-3 py-1.5 rounded-xl cursor-pointer hover:bg-[#E8DFC9] ${busy ? 'opacity-50 pointer-events-none' : ''}`}
+                  >
+                    {busy ? 'Envoi...' : v.video_url ? 'Remplacer la vidéo' : 'Déposer la vidéo'}
+                    <input
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        deposer(v, file);
+                      }}
+                    />
+                  </label>
                   <button
                     onClick={() => setActive(v)}
                     className="font-bold text-gold-700 hover:text-stone-900 text-xs"
