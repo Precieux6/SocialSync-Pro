@@ -34,6 +34,9 @@ export default function WeeklyTemplate({ notify, canEdit }) {
 
   if (!template) return <p className="text-xs text-stone-500">Chargement du modèle...</p>;
 
+  // Structure attendue : days = [{ day_index, label, slots: [...] }, ...]
+  const days = Array.isArray(template.days) ? template.days : [];
+
   return (
     <div className="space-y-4">
       <p className="text-xs text-stone-600">
@@ -49,32 +52,36 @@ export default function WeeklyTemplate({ notify, canEdit }) {
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {template.days.map((day) => (
-          <button
-            key={day.day_index}
-            type="button"
-            onClick={() => setOpenDay(day.day_index)}
-            className="text-left bg-[#FAF7F2] border border-[#E2D5C3] hover:border-gold-500 rounded-2xl p-4 space-y-3 transition-all"
-          >
-            <div className="flex items-center justify-between">
-              <span className="font-serif font-bold text-sm text-stone-900">{day.label}</span>
-              <span className="text-[10px] font-bold text-stone-500">{day.slots.length} créneau(x)</span>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {day.slots.length === 0 && (
-                <span className="text-[11px] italic text-stone-400">Aucune publication</span>
-              )}
-              {day.slots.map((s, i) => (
-                <span
-                  key={i}
-                  className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#F4EFE6] border border-[#E2D5C3] text-stone-700"
-                >
-                  {s.publish_time} · {s.format}
-                </span>
-              ))}
-            </div>
-          </button>
-        ))}
+        {days.map((day, index) => {
+          const slots = Array.isArray(day?.slots) ? day.slots : [];
+          const dayIndex = typeof day?.day_index === 'number' ? day.day_index : index;
+          return (
+            <button
+              key={dayIndex}
+              type="button"
+              onClick={() => setOpenDay(dayIndex)}
+              className="text-left bg-[#FAF7F2] border border-[#E2D5C3] hover:border-gold-500 rounded-2xl p-4 space-y-3 transition-all"
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-serif font-bold text-sm text-stone-900">{day?.label}</span>
+                <span className="text-[10px] font-bold text-stone-500">{slots.length} créneau(x)</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {slots.length === 0 && (
+                  <span className="text-[11px] italic text-stone-400">Aucune publication</span>
+                )}
+                {slots.map((s, i) => (
+                  <span
+                    key={i}
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#F4EFE6] border border-[#E2D5C3] text-stone-700"
+                  >
+                    {s.publish_time} · {s.format}
+                  </span>
+                ))}
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       {openDay !== null && (
@@ -84,7 +91,14 @@ export default function WeeklyTemplate({ notify, canEdit }) {
           canEdit={canEdit}
           notify={notify}
           onClose={() => setOpenDay(null)}
-          onSaved={(r) => setTemplate(r)}
+          onSaved={(next) =>
+            setTemplate((prev) => ({
+              ...prev,
+              isDefault: next.isDefault,
+              formats: next.formats,
+              days: next.days,
+            }))
+          }
         />
       )}
     </div>
