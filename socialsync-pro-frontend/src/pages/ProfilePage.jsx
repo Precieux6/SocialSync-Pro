@@ -14,8 +14,12 @@ export const TIMEZONES = [
 const input =
   'w-full bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-3 text-xs text-stone-900 focus:outline-none focus:border-gold-500';
 
+// Le relecteur / client consulte les exemples mais ne les modifie pas
+const READ_ONLY_ROLE = 'Relecteur / Client';
+
 export default function ProfilePage({ notify }) {
-  const { user, isOwner, myProfile, refreshProfiles, handleLogout } = useAuth();
+  const { user, isOwner, myProfile, refreshProfiles, handleLogout, userRole } = useAuth();
+  const isReadOnly = userRole === READ_ONLY_ROLE;
 
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -256,12 +260,13 @@ export default function ProfilePage({ notify }) {
                 notify={notify}
               />
             </div>
-            <div className="space-y-3">
-              <h4 className="font-serif font-bold text-sm text-stone-900">Exemples de référence</h4>
-              <ExamplesManager notify={notify} />
-            </div>
           </div>
         )}
+
+        <div className="pt-6 border-t border-[#E2D5C3] space-y-3">
+          <h4 className="font-serif font-bold text-sm text-stone-900">Exemples de référence</h4>
+          <ExamplesManager notify={notify} canWrite={!isReadOnly} />
+        </div>
 
         <div className="pt-6 border-t-2 border-red-200 space-y-4">
           <h4 className="font-serif font-bold text-sm text-red-700">Zone de danger</h4>
