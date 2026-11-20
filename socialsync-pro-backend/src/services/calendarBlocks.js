@@ -1,13 +1,5 @@
 // socialsync-pro-backend/src/services/calendarBlocks.js
-const DAY_TEMPLATE = [
-  ['Photo'],
-  ['Carrousel', 'Story', 'Live'],
-  ['Vidéo courte'],
-  ['Question'],
-  ['Séance YouTube', 'Story'],
-  ['Photo'],
-  ['Vidéo courte'],
-];
+import { loadTemplate } from './weeklyTemplate.js';
 
 // Semaine de départ de chaque mois (janvier à décembre), identique à calendarGrid.js
 export const START_WEEK = [9, 1, 5, 9, 1, 5, 9, 1, 5, 9, 1, 5];
@@ -33,7 +25,7 @@ export function blockFor(year, monthIndex) {
 }
 
 // Numéro de semaine (1 à 13) d'un lundi, selon le bloc du mois auquel il appartient.
-// Retourne null si le lundi n'appartient à aucun bloc (dernière semaine partielle).
+// Retourne null si le lundi n'appartient à aucun bloc.
 export function weekNumOf(monday) {
   const d = new Date(`${monday}T00:00:00Z`);
   const { start, startWeek } = blockFor(d.getUTCFullYear(), d.getUTCMonth());
@@ -44,33 +36,49 @@ export function weekNumOf(monday) {
   return ((startWeek - 1 + i) % 13) + 1;
 }
 
+// Crée les publications manquantes d'un bloc de 4 semaines, d'après le modèle de l'espace.
+// Ne crée jamais de doublon : on compare format par format et jour par jour.
 export async function ensureBlock(db, ownerId, start, startWeek) {
   const end = addDays(start, 27);
   const { data: existing, error: eErr } = await db
     .from('editorial_posts')
-    .select('post_date, format, platform')
+    .select('post_date, format')
     .eq('owner_id', ownerId)
     .eq('is_adhoc', false)
     .gte('post_date', start)
     .lte('post_date', end);
   if (eErr) throw new Error(eErr.message);
 
-  const have = new Set((existing || []).map((p) => `${p.post_date}|${p.format}|${p.platform}`));
+  const have = new Map();
+  for (const p of existing || []) {
+    const key = `${p.post_date}|${p.format}`;
+    have.set(key, (have.get(key) || 0) + 1);
+  }
+
+  const template = await loadTemplate(db, ownerId);
   const rows = [];
 
   for (let i = 0; i < 4; i++) {
     const weekNum = ((startWeek - 1 + i) % 13) + 1;
     for (let d = 0; d < 7; d++) {
       const post_date = addDays(start, i * 7 + d);
-      for (const format of DAY_TEMPLATE[d]) {
-        if (have.has(`${post_date}|${format}|instagram`)) continue;
+      const seen = new Map();
+
+      for (const slot of template.days[d]) {
+        const key = `${post_date}|${slot.format}`;
+        const occurrence = (seen.get(key) || 0) + 1;
+        seen.set(key, occurrence);
+        if (occurrence <= (have.get(key) || 0)) continue;
+
         rows.push({
           owner_id: ownerId,
           post_date,
           week_num: weekNum,
           day_index: d,
-          format,
+          format: slot.format,
           platform: 'instagram',
+          publish_time: slot.publish_time,
+          brief: slot.brief || '',
           status: 'brouillon',
           is_adhoc: false,
         });
