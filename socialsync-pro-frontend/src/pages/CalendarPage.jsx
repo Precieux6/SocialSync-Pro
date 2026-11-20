@@ -4,8 +4,8 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import PostEditor from '../components/calendar/PostEditor';
 import { MONTHS_LIST, DAY_LABELS, addDays, weekStartFor, shortDate } from '../utils/calendarGrid';
+import { FORMATS } from '../constants/formats';
 
-const FORMATS = ['Photo', 'Carrousel', 'Vidéo courte', 'Séance YouTube', 'Story', 'Question', 'Live'];
 const READ_ONLY_ROLE = 'Relecteur / Client';
 const NO_THEME = 'Thème à définir';
 
