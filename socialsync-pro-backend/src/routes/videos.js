@@ -20,12 +20,12 @@ const titleOf = (p) => {
   return firstLine || p.format;
 };
 
-// GET /api/videos/to-film : vidéos à tourner de l'espace actif, lues directement dans editorial_posts
+// GET /api/videos/to-film : vidéos à tourner de l'espace actif, lues dans editorial_posts
 router.get('/to-film', async (req, res) => {
   try {
     const { data, error } = await req.db
       .from('editorial_posts')
-      .select('id, post_date, format, platform, brief, caption, script, status, ai_generated_at, reviewed_at')
+      .select('id, post_date, format, platform, brief, caption, script, status, video_url, ai_generated_at, reviewed_at')
       .eq('owner_id', req.ownerId)
       .eq('is_adhoc', false)
       .in('format', VIDEO_FORMATS)
@@ -40,6 +40,7 @@ router.get('/to-film', async (req, res) => {
       title: titleOf(p),
       release_date: p.post_date,
       script: p.script || '',
+      video_url: p.video_url || null,
       content_state: stateOf(p),
     }));
 
