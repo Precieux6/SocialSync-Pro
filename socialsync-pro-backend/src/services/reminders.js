@@ -1,10 +1,10 @@
 // socialsync-pro-backend/src/services/reminders.js
 import { resend } from '../config/resend.js';
 import { addDays } from './calendarBlocks.js';
+import { VIDEO_FORMATS } from '../config/formats.js';
 
 const FROM_ADDRESS = process.env.RESEND_FROM || 'SocialSync Pro <onboarding@resend.dev>';
 const APP_URL = String(process.env.APP_URL || '').trim().replace(/\/+$/, '');
-const VIDEO_FORMATS = ['Vidéo courte', 'Séance YouTube', 'Live'];
 const DAYS_BEFORE = 3;   // rappels à J-3, J-2, J-1 et le jour J
 const LEAD_HOURS = 3;    // le jour J, rappel à partir de 3 h avant l'heure de publication
 
