@@ -192,4 +192,9 @@ export const api = {
     create: (data) => request('/examples', { method: 'POST', body: data }),
     remove: (id) => request(`/examples/${id}`, { method: 'DELETE' }),
   },
+
+  auth: {
+    forgotPassword: (email) =>
+      request('/auth/forgot-password', { method: 'POST', body: { email }, space: false }),
+  },
 };
