@@ -1,9 +1,8 @@
 // socialsync-pro-backend/src/routes/videos.js
 import express from 'express';
+import { VIDEO_FORMATS } from '../config/formats.js';
 
 const router = express.Router();
-
-const VIDEO_FORMATS = ['Vidéo courte', 'Séance YouTube', 'Live'];
 
 // État de rédaction lisible par l'interface
 const stateOf = (p) => {
