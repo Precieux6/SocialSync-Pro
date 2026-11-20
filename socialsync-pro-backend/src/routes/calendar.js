@@ -2,6 +2,7 @@
 import express from 'express';
 import { requireOwner } from '../middleware/auth.js';
 import { ensureBlock, weekNumOf } from '../services/calendarBlocks.js';
+import { FORMATS } from '../config/formats.js';
 
 const router = express.Router();
 
@@ -11,8 +12,6 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const LOCAL_DT_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
 const DEFAULT_TZ = 'Europe/Paris';
 const HTTPS_RE = /^https:\/\//;
-
-const FORMATS = ['Photo', 'Carrousel', 'Vidéo courte', 'Séance YouTube', 'Story', 'Question', 'Live'];
 
 // Champs dont la modification remet un contenu généré en attente de relecture
 const CONTENT_KEYS = [
