@@ -9,6 +9,7 @@ import { runContentAutomation } from '../services/contentPlanner.js';
 const router = express.Router();
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const PLATFORMS = ['instagram', 'facebook', 'youtube', 'tiktok'];
+const MANUAL_BUDGET_MS = 240_000; // bouton manuel : la fonction peut aller jusqu'à 300 s
 
 const SYSTEM_PROMPT = `
 Vous êtes l'assistant éditorial officiel pour SocialSync Pro.
@@ -106,7 +107,7 @@ router.post('/generate-prompt', (req, res) => {
   });
 });
 
-// POST /api/ai/generate-now : lance le cycle de rédaction pour l'espace courant (une semaine par appel)
+// POST /api/ai/generate-now : lance le cycle de rédaction pour l'espace courant
 router.post(
   '/generate-now',
   requireRole('Propriétaire', 'Éditeur', 'Community Manager'),
@@ -123,6 +124,7 @@ router.post(
         ownerId: req.ownerId,
         apiKey: cfg.apiKey,
         reference: cfg.reference,
+        budgetMs: MANUAL_BUDGET_MS,
       });
       res.json({ success: true, ...result });
     } catch (err) {
