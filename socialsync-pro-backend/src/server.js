@@ -17,6 +17,7 @@ import setupRoutes from './routes/setup.js';
 import accountRoutes from './routes/account.js';
 import internalRoutes from './routes/internal.js';
 import examplesRoutes from './routes/examples.js';
+import authRoutes from './routes/auth.js';
 
 import { requireAuth } from './middleware/auth.js';
 
@@ -87,6 +88,9 @@ app.use(['/api/team/invite', '/api/team/invitations'], rateLimit({
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
+
+// Route publique (mot de passe oublié) : sans authentification, donc avant requireAuth
+app.use('/api/auth', authRoutes);
 
 // Route interne : protégée par CRON_SECRET, sans authentification utilisateur
 app.use('/api/internal', internalRoutes);
