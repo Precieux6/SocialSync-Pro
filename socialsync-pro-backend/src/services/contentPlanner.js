@@ -5,7 +5,9 @@ import { addDays, blockFor, ensureBlock, mondayOf } from './calendarBlocks.js';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const MAX_ATTEMPTS = 2;
 const MAX_LIGHT_PER_CALL = 10;
-const TIME_BUDGET_MS = 100_000;   // marge sous la limite de 300 s d'une fonction serverless
+const TIME_BUDGET_MS = 200_000;   // budget par défaut (cron) : marge sous la limite de 300 s
+const SCRIPT_START_MS = 150_000;  // un script long ne démarre que s'il reste au moins 150 s
+const LIGHT_START_MS = 30_000;    // un lot léger ne démarre que s'il reste au moins 30 s
 const CAPTION_MAX = 700;
 const SCRIPT_MAX = 40000;
 const PROMPT_MAX = 2000;
@@ -408,7 +410,7 @@ async function scriptJob({ db, ownerId, apiKey, reference, post }) {
   return { weekStart, kind: 'script', requested: 1, generated: error ? 0 : 1 };
 }
 
-// Tâches dues, triées par date : lots légers, lots longs, et scripts longs restants
+// Tâches dues, triées par date : scripts longs restants, lots légers et longs
 async function dueJobs(db, ownerId, today) {
   const { data, error } = await db
     .from('editorial_posts')
@@ -444,10 +446,12 @@ async function dueJobs(db, ownerId, today) {
   );
 }
 
-// Cycle complet d'un espace : crée les blocs, puis traite les tâches dues dans la limite de temps.
+// Cycle complet d'un espace : crée les blocs, puis traite d'abord les scripts longs,
+// puis les lots légers et longs, dans la limite de budgetMs.
 // Une tâche en échec est écartée pour la durée de l'exécution, sans bloquer les autres.
-export async function runContentAutomation({ db, ownerId, apiKey, reference }) {
+export async function runContentAutomation({ db, ownerId, apiKey, reference, budgetMs = TIME_BUDGET_MS }) {
   const started = Date.now();
+  const left = () => budgetMs - (Date.now() - started);
   const today = new Date().toISOString().slice(0, 10);
 
   const y = new Date().getUTCFullYear();
@@ -460,10 +464,7 @@ export async function runContentAutomation({ db, ownerId, apiKey, reference }) {
   const report = { requested: 0, generated: 0, weekStart: null, jobs: [], errors: [] };
   const failed = new Set();
 
-  while (Date.now() - started < TIME_BUDGET_MS) {
-    const next = (await dueJobs(db, ownerId, today)).find((j) => !failed.has(j.key));
-    if (!next) break;
-
+  const runJob = async (next) => {
     try {
       const r = next.kind === 'script'
         ? await scriptJob({ db, ownerId, apiKey, reference, post: next.post })
@@ -471,9 +472,8 @@ export async function runContentAutomation({ db, ownerId, apiKey, reference }) {
 
       if (!r.requested || !r.generated) {
         failed.add(next.key);
-        continue;
+        return;
       }
-
       report.requested += r.requested;
       report.generated += r.generated;
       report.weekStart = report.weekStart || r.weekStart;
@@ -482,6 +482,20 @@ export async function runContentAutomation({ db, ownerId, apiKey, reference }) {
       failed.add(next.key);
       report.errors.push(`${next.key} : ${err.message}`);
     }
+  };
+
+  // Phase 1 : scripts longs. Un script demande 4 à 6 appels : il faut du temps devant soi.
+  while (left() > SCRIPT_START_MS) {
+    const next = (await dueJobs(db, ownerId, today)).find((j) => j.kind === 'script' && !failed.has(j.key));
+    if (!next) break;
+    await runJob(next);
+  }
+
+  // Phase 2 : lots légers et longs
+  while (left() > LIGHT_START_MS) {
+    const next = (await dueJobs(db, ownerId, today)).find((j) => j.kind !== 'script' && !failed.has(j.key));
+    if (!next) break;
+    await runJob(next);
   }
 
   return report;
