@@ -1,7 +1,9 @@
 // socialsync-pro-frontend/src/App.jsx
 import React, { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './context/AuthContext';
+import { supabase } from './supabaseClient';
 import Login from './components/Login';
+import ResetPassword from './components/ResetPassword';
 import Sidebar from './components/Sidebar';
 import Onboarding from './components/setup/Onboarding';
 import CalendarPage from './pages/CalendarPage';
@@ -39,6 +41,8 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const [setup, setSetup] = useState({ loading: true, complete: false, error: null });
+  // Réinitialisation du mot de passe : lien reçu par e-mail
+  const [recovery, setRecovery] = useState(() => window.location.hash.includes('type=recovery'));
 
   const notify = useCallback((msg) => {
     setToast(msg);
@@ -51,6 +55,14 @@ export default function App() {
       notify(`Invitation non acceptée : ${invitationError}`);
     }
   }, [invitationError, notify]);
+
+  // Supabase émet PASSWORD_RECOVERY lorsqu'un lien de réinitialisation est ouvert
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') setRecovery(true);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   // Espace propre du propriétaire connecté
   const ownSpace = Boolean(session && isOwner && isOwnSpace && activeSpace?.ownerId === session.user.id);
@@ -87,6 +99,19 @@ export default function App() {
     },
     [activeSpace, switchSpace, notify]
   );
+
+  // Écran de nouveau mot de passe : avant tout le reste, y compris le chargement de session
+  if (recovery) {
+    return (
+      <ResetPassword
+        notify={notify}
+        onDone={() => {
+          window.history.replaceState(null, '', window.location.pathname);
+          setRecovery(false);
+        }}
+      />
+    );
+  }
 
   if (loadingSession) return <Loader />;
   if (!session) return <Login />;
