@@ -1,6 +1,6 @@
 // socialsync-pro-backend/src/routes/examples.js
 import express from 'express';
-import { requireOwner } from '../middleware/auth.js';
+import { requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -9,8 +9,12 @@ const KINDS = ['legende', 'prompt_image', 'prompt_miniature', 'script_court', 's
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const clip = (v, max) => String(v ?? '').trim().slice(0, max);
 
-// GET /api/examples : tous les exemples de l'espace, du plus récent au plus ancien
-router.get('/', requireOwner, async (req, res) => {
+// Lecture : tous les membres de l'espace. Écriture : hors relecteur / client.
+const READ = requireRole('Propriétaire', 'Éditeur', 'Community Manager', 'Relecteur / Client');
+const WRITE = requireRole('Propriétaire', 'Éditeur', 'Community Manager');
+
+// GET /api/examples : exemples de l'espace actif, du plus récent au plus ancien
+router.get('/', READ, async (req, res) => {
   const { data, error } = await req.db
     .from('content_examples')
     .select('*')
@@ -21,7 +25,7 @@ router.get('/', requireOwner, async (req, res) => {
 });
 
 // POST /api/examples : ajoute un exemple
-router.post('/', requireOwner, async (req, res) => {
+router.post('/', WRITE, async (req, res) => {
   const b = req.body || {};
   const format = String(b.format || '');
   const kind = String(b.kind || '');
@@ -29,7 +33,6 @@ router.post('/', requireOwner, async (req, res) => {
   if (!FORMATS.includes(format)) return res.status(400).json({ success: false, error: 'Format invalide.' });
   if (!KINDS.includes(kind)) return res.status(400).json({ success: false, error: "Type d'exemple invalide." });
 
-  // Jour de la semaine : 0 = lundi ... 6 = dimanche, ou null (tous les jours)
   let dayIndex = null;
   if (kind === 'prompt_image' && b.day_index !== undefined && b.day_index !== null && b.day_index !== '') {
     const d = Number(b.day_index);
@@ -45,6 +48,7 @@ router.post('/', requireOwner, async (req, res) => {
 
   const row = {
     owner_id: req.ownerId,
+    created_by: req.user.id,
     format,
     kind,
     day_index: dayIndex,
@@ -66,8 +70,8 @@ router.post('/', requireOwner, async (req, res) => {
   res.status(201).json({ success: true, example: data });
 });
 
-// DELETE /api/examples/:id
-router.delete('/:id', requireOwner, async (req, res) => {
+// DELETE /api/examples/:id : même périmètre que l'écriture
+router.delete('/:id', WRITE, async (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
   const { error } = await req.db
     .from('content_examples')
