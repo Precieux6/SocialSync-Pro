@@ -90,8 +90,9 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Route publique (mot de passe oublié) : sans authentification, donc avant requireAuth
+// Routes publiques, sans authentification utilisateur, donc avant requireAuth
 app.use('/api/auth', authRoutes);
+app.use('/api/reminders', remindersRoutes);
 
 // Route interne : protégée par CRON_SECRET, sans authentification utilisateur
 app.use('/api/internal', internalRoutes);
