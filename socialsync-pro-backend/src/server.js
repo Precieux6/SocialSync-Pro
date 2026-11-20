@@ -17,6 +17,7 @@ import setupRoutes from './routes/setup.js';
 import accountRoutes from './routes/account.js';
 import internalRoutes from './routes/internal.js';
 import examplesRoutes from './routes/examples.js';
+import remindersRoutes from './routes/reminders.js';
 import authRoutes from './routes/auth.js';
 
 import { requireAuth } from './middleware/auth.js';
