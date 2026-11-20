@@ -22,6 +22,14 @@ const blankSlot = (format) =>
     note: '',
   });
 
+// Créneaux du jour donné, quelle que soit la forme reçue (objet { slots } ou tableau direct)
+const slotsOfDay = (template, dayIndex) => {
+  const day = template?.days?.[dayIndex];
+  if (Array.isArray(day)) return day;
+  if (Array.isArray(day?.slots)) return day.slots;
+  return [];
+};
+
 function summaryOf(r, dayCount) {
   const parts = [`Modèle mis à jour pour ${dayCount} jour(s).`];
   if (r.sync) {
@@ -41,7 +49,7 @@ const btnPrimary =
   'px-5 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow hover:bg-stone-800 disabled:opacity-50';
 
 export default function DayConfigPanel({ dayIndex, template, canEdit, notify, onClose, onSaved }) {
-  const [slots, setSlots] = useState(() => template.days[dayIndex].map(toEditable));
+  const [slots, setSlots] = useState(() => slotsOfDay(template, dayIndex).map(toEditable));
   const [targets, setTargets] = useState([dayIndex]);
   const [busy, setBusy] = useState(false);
 
@@ -74,7 +82,8 @@ export default function DayConfigPanel({ dayIndex, template, canEdit, notify, on
     try {
       const payload = slots.map(({ _k, ...rest }) => rest);
       const r = await api.template.save(targets, payload);
-      onSaved(r);
+      // On transmet uniquement le modèle au parent, pas la réponse brute de l'API
+      onSaved({ isDefault: r.isDefault, formats: r.formats, days: r.days });
       notify(summaryOf(r, targets.length));
       onClose();
     } catch (e) {
