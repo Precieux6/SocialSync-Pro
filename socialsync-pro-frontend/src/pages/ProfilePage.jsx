@@ -4,7 +4,7 @@ import { api, uploadFile } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
 import { ClaudeKeyForm, ReferenceCalendarForm } from '../components/setup/SetupForms';
-import ExamplesManager from '../components/setup/ExamplesManager';
+import WeeklyTemplate from '../components/template/WeeklyTemplate';
 
 export const TIMEZONES = [
   'Europe/Paris', 'Africa/Porto-Novo', 'Africa/Abidjan', 'Africa/Casablanca',
@@ -14,7 +14,7 @@ export const TIMEZONES = [
 const input =
   'w-full bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-3 text-xs text-stone-900 focus:outline-none focus:border-gold-500';
 
-// Le relecteur / client consulte les exemples mais ne les modifie pas
+// Le relecteur / client consulte le modèle mais ne le modifie pas
 const READ_ONLY_ROLE = 'Relecteur / Client';
 
 export default function ProfilePage({ notify }) {
@@ -264,8 +264,8 @@ export default function ProfilePage({ notify }) {
         )}
 
         <div className="pt-6 border-t border-[#E2D5C3] space-y-3">
-          <h4 className="font-serif font-bold text-sm text-stone-900">Exemples de référence</h4>
-          <ExamplesManager notify={notify} canWrite={!isReadOnly} />
+          <h4 className="font-serif font-bold text-sm text-stone-900">Modèle de la semaine</h4>
+          <WeeklyTemplate notify={notify} canEdit={!isReadOnly} />
         </div>
 
         <div className="pt-6 border-t-2 border-red-200 space-y-4">
