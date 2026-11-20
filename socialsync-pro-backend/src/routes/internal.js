@@ -5,12 +5,12 @@ import { getSupabaseAdmin } from '../utils/supabaseAdmin.js';
 import { decryptSecret } from '../utils/crypto.js';
 import { publishInstagram } from '../services/publishers/instagram.js';
 import { runContentAutomation } from '../services/contentPlanner.js';
+import { sendVideoReminders } from '../services/reminders.js';
 
 const router = express.Router();
 
 const BATCH_SIZE = 5;
 const MAX_ATTEMPTS = 3;
-// Marge avant la limite de durée de la fonction (maxDuration = 300 s)
 const CONTENT_BUDGET_MS = 200_000;
 
 const PUBLISHERS = {
@@ -135,13 +135,14 @@ async function publishDue(req, res) {
   }
 }
 
-// Rédaction automatique de la semaine suivante, pour chaque espace qui a une clé et un calendrier
+// Rédaction automatique, puis rappels de tournage pour tous les espaces
 async function contentJob(req, res) {
   if (!isAuthorized(req)) return res.status(401).json({ success: false, error: 'Non autorisé.' });
 
   try {
     const admin = getSupabaseAdmin();
     const t0 = Date.now();
+    const today = new Date().toISOString().slice(0, 10);
 
     const { data: spaces, error } = await admin
       .from('owner_settings')
@@ -168,15 +169,23 @@ async function contentJob(req, res) {
       try {
         const apiKey = decryptSecret(s.claude_key_encrypted);
         if (!apiKey) throw new Error('clé illisible');
-        const result = await runContentAutomation({
-          db: admin,
-          ownerId: s.owner_id,
-          apiKey,
-          reference,
-        });
+        const result = await runContentAutomation({ db: admin, ownerId: s.owner_id, apiKey, reference });
         report.push({ owner: s.owner_id, ...result });
       } catch (err) {
         report.push({ owner: s.owner_id, error: err.message });
+      }
+    }
+
+    // Rappels de tournage : indépendants de la clé Claude
+    const { data: owners, error: oErr } = await admin.from('owner_settings').select('owner_id');
+    if (!oErr) {
+      for (const o of owners || []) {
+        try {
+          const r = await sendVideoReminders({ admin, ownerId: o.owner_id, today });
+          if (r.sent) report.push({ owner: o.owner_id, reminders: r.sent });
+        } catch (err) {
+          report.push({ owner: o.owner_id, reminderError: err.message });
+        }
       }
     }
 
@@ -187,7 +196,6 @@ async function contentJob(req, res) {
   }
 }
 
-// Vercel Cron appelle en GET ; POST reste disponible pour les tests manuels
 router.get('/publish-due', publishDue);
 router.post('/publish-due', publishDue);
 router.get('/content-job', contentJob);
