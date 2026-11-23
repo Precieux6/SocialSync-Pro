@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { getSupabaseAdmin } from '../utils/supabaseAdmin.js';
 import { decryptSecret } from '../utils/crypto.js';
 import { publishInstagram } from '../services/publishers/instagram.js';
-import { runContentAutomation } from '../services/contentPlanner.js';
+import { runContentAutomation, parisToday } from '../services/contentPlanner.js';
 import { sendVideoReminders } from '../services/reminders.js';
 
 const router = express.Router();
@@ -12,6 +12,7 @@ const router = express.Router();
 const BATCH_SIZE = 5;
 const MAX_ATTEMPTS = 3;
 const CONTENT_BUDGET_MS = 200_000;
+const SCRIPTS_BUDGET_MS = 270_000;   // route dédiée aux scripts longs (maxDuration à prévoir)
 const STUCK_AFTER_MS = 15 * 60_000;
 
 const PUBLISHERS = {
@@ -32,13 +33,6 @@ function secretMatches(received) {
 function isAuthorized(req) {
   const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   return secretMatches(req.headers['x-cron-secret']) || secretMatches(bearer);
-}
-
-// Date du jour à Paris (et non UTC), cohérente avec les heures de publication
-function parisToday() {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
 }
 
 // Identifiants réseau d'un espace, déchiffrés uniquement côté serveur
@@ -155,13 +149,14 @@ async function publishDue(req, res) {
         results.published += 1;
       } catch (err) {
         const attempts = (post.publish_attempts || 0) + 1;
+        // Si la publication a peut-être abouti côté réseau, on ne relance jamais automatiquement
+        const nextStatus = err.ambiguous || attempts >= MAX_ATTEMPTS ? 'echec' : 'programme';
+        const detail = err.creationId
+          ? `${String(err.message).slice(0, 400)} [conteneur ${err.creationId}]`
+          : String(err.message).slice(0, 500);
         const { error: fErr } = await admin
           .from('editorial_posts')
-          .update({
-            status: attempts >= MAX_ATTEMPTS ? 'echec' : 'programme',
-            last_error: String(err.message).slice(0, 500),
-            updated_at: new Date().toISOString(),
-          })
+          .update({ status: nextStatus, last_error: detail, updated_at: new Date().toISOString() })
           .eq('id', post.id);
         if (fErr) console.error('publish-due : échec non enregistré', post.id, fErr.message);
         results.failed += 1;
@@ -175,7 +170,7 @@ async function publishDue(req, res) {
   }
 }
 
-// GET|POST /api/internal/content-job : rédaction automatique uniquement
+// GET|POST /api/internal/content-job : rédaction automatique (légendes, prompts, formats courts)
 async function contentJob(req, res) {
   if (!isAuthorized(req)) return res.status(401).json({ success: false, error: 'Non autorisé.' });
 
@@ -212,7 +207,15 @@ async function contentJob(req, res) {
       try {
         const apiKey = decryptSecret(s.claude_key_encrypted);
         if (!apiKey) throw new Error('clé illisible');
-        await runContentAutomation({ db: admin, ownerId: s.owner_id, apiKey, reference, today });
+        await runContentAutomation({
+          db: admin,
+          ownerId: s.owner_id,
+          apiKey,
+          reference,
+          today,
+          budgetMs: CONTENT_BUDGET_MS - (Date.now() - t0),
+          skipScripts: true,
+        });
         summary.generated += 1;
       } catch (err) {
         console.error('content-job : espace', s.owner_id, ':', err.message);
@@ -223,6 +226,66 @@ async function contentJob(req, res) {
     res.json({ success: true, today, ...summary });
   } catch (err) {
     console.error('content-job :', err);
+    res.status(500).json({ success: false, error: 'Erreur interne du job.' });
+  }
+}
+
+// GET|POST /api/internal/scripts-job : scripts longs, partie par partie (durée maximale plus élevée)
+async function scriptsJob(req, res) {
+  if (!isAuthorized(req)) return res.status(401).json({ success: false, error: 'Non autorisé.' });
+
+  try {
+    const admin = getSupabaseAdmin();
+    const t0 = Date.now();
+    const today = parisToday();
+
+    const { data: spaces, error } = await admin
+      .from('owner_settings')
+      .select('owner_id, claude_key_encrypted, reference_calendar')
+      .not('claude_key_encrypted', 'is', null)
+      .eq('auto_generate', true)
+      .range(0, 4999);
+    if (error) throw new Error(error.message);
+
+    const summary = { spaces: 0, generated: 0, skipped: 0, errors: 0, budgetReached: false };
+
+    for (const s of spaces || []) {
+      if (Date.now() - t0 > SCRIPTS_BUDGET_MS) {
+        summary.budgetReached = true;
+        break;
+      }
+      summary.spaces += 1;
+
+      const reference = s.reference_calendar?.content
+        ? String(s.reference_calendar.content).slice(0, 100000)
+        : null;
+      if (!reference) {
+        summary.skipped += 1;
+        continue;
+      }
+
+      try {
+        const apiKey = decryptSecret(s.claude_key_encrypted);
+        if (!apiKey) throw new Error('clé illisible');
+        await runContentAutomation({
+          db: admin,
+          ownerId: s.owner_id,
+          apiKey,
+          reference,
+          today,
+          budgetMs: SCRIPTS_BUDGET_MS - (Date.now() - t0),
+          scriptsOnly: true,
+        });
+        summary.generated += 1;
+      } catch (err) {
+        console.error('scripts-job : espace', s.owner_id, ':', err.message);
+        summary.errors += 1;
+      }
+    }
+
+    res.json({ success: true, today, ...summary });
+  } catch (err) {
+    console.error('scripts-job :', err);
     res.status(500).json({ success: false, error: 'Erreur interne du job.' });
   }
 }
@@ -266,6 +329,8 @@ router.get('/publish-due', publishDue);
 router.post('/publish-due', publishDue);
 router.get('/content-job', contentJob);
 router.post('/content-job', contentJob);
+router.get('/scripts-job', scriptsJob);
+router.post('/scripts-job', scriptsJob);
 router.get('/reminders', remindersJob);
 router.post('/reminders', remindersJob);
 
