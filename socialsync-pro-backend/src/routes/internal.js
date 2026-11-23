@@ -12,6 +12,7 @@ const router = express.Router();
 const BATCH_SIZE = 5;
 const MAX_ATTEMPTS = 3;
 const CONTENT_BUDGET_MS = 200_000;
+const STUCK_AFTER_MS = 15 * 60_000;
 
 const PUBLISHERS = {
   instagram: publishInstagram,
@@ -27,10 +28,17 @@ function secretMatches(received) {
 }
 
 // Vercel Cron envoie « Authorization: Bearer <CRON_SECRET> ».
-// Les appels manuels ou externes peuvent utiliser l'en-tête X-Cron-Secret.
+// Les appels manuels peuvent utiliser l'en-tête X-Cron-Secret.
 function isAuthorized(req) {
   const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   return secretMatches(req.headers['x-cron-secret']) || secretMatches(bearer);
+}
+
+// Date du jour à Paris (et non UTC), cohérente avec les heures de publication
+function parisToday() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
 }
 
 // Identifiants réseau d'un espace, déchiffrés uniquement côté serveur
@@ -55,13 +63,49 @@ async function publishToNetwork(post, creds) {
   return publisher(post, platformCreds);
 }
 
-// Publication des posts programmés dont l'heure est atteinte
+// Enregistre le succès ; réessaie car le post est déjà sur le réseau
+async function markPublished(admin, id, externalId, warning) {
+  for (let i = 0; i < 3; i += 1) {
+    const { error } = await admin
+      .from('editorial_posts')
+      .update({
+        status: 'publie',
+        external_id: externalId ?? null,
+        last_error: warning ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    if (!error) return true;
+    console.error(`publish-due : statut « publié » non enregistré (essai ${i + 1}) :`, id, error.message);
+  }
+  return false;
+}
+
+// Posts restés « en_cours » après un arrêt brutal. On ne les republie jamais
+// automatiquement : ils passent en échec pour vérification manuelle.
+async function recoverStuckPosts(admin, nowIso) {
+  const cutoff = new Date(Date.now() - STUCK_AFTER_MS).toISOString();
+  const { error } = await admin
+    .from('editorial_posts')
+    .update({
+      status: 'echec',
+      last_error: 'Publication interrompue : vérifiez sur le réseau avant de reprogrammer.',
+      updated_at: nowIso,
+    })
+    .eq('status', 'en_cours')
+    .lt('updated_at', cutoff);
+  if (error) console.error('publish-due : récupération des posts bloqués :', error.message);
+}
+
+// GET|POST /api/internal/publish-due
 async function publishDue(req, res) {
   if (!isAuthorized(req)) return res.status(401).json({ success: false, error: 'Non autorisé.' });
 
   try {
     const admin = getSupabaseAdmin();
     const nowIso = new Date().toISOString();
+
+    await recoverStuckPosts(admin, nowIso);
 
     const { data: due, error: dErr } = await admin
       .from('editorial_posts')
@@ -73,10 +117,10 @@ async function publishDue(req, res) {
     if (dErr) throw new Error(dErr.message);
 
     const credsByOwner = new Map();
-    const results = { claimed: 0, published: 0, failed: 0, skipped: 0 };
+    const results = { claimed: 0, published: 0, failed: 0, skipped: 0, unconfirmed: 0 };
 
     for (const post of due || []) {
-      // Verrou atomique : seule une exécution peut passer le statut à « en_cours »
+      // Verrou atomique : une seule exécution peut passer le post à « en_cours »
       const { data: claimed, error: cErr } = await admin
         .from('editorial_posts')
         .update({
@@ -88,7 +132,12 @@ async function publishDue(req, res) {
         .eq('status', 'programme')
         .select('id')
         .maybeSingle();
-      if (cErr) throw new Error(cErr.message);
+      if (cErr) {
+        // Une erreur sur un post n'arrête pas le lot
+        console.error('publish-due : verrou impossible', post.id, cErr.message);
+        results.failed += 1;
+        continue;
+      }
       if (!claimed) {
         results.skipped += 1;
         continue;
@@ -101,29 +150,20 @@ async function publishDue(req, res) {
         }
         const { externalId, warning } = await publishToNetwork(post, credsByOwner.get(post.owner_id));
 
-        const { error: uErr } = await admin
-          .from('editorial_posts')
-          .update({
-            status: 'publie',
-            external_id: externalId,
-            last_error: warning,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', post.id);
-        // Le post est déjà sur le réseau : on journalise sans relancer la publication
-        if (uErr) console.error('publish-due : statut non enregistré pour un post publié', post.id, uErr.message);
+        const saved = await markPublished(admin, post.id, externalId, warning);
+        if (!saved) results.unconfirmed += 1;
         results.published += 1;
       } catch (err) {
         const attempts = (post.publish_attempts || 0) + 1;
-        const nextStatus = attempts >= MAX_ATTEMPTS ? 'echec' : 'programme';
-        await admin
+        const { error: fErr } = await admin
           .from('editorial_posts')
           .update({
-            status: nextStatus,
+            status: attempts >= MAX_ATTEMPTS ? 'echec' : 'programme',
             last_error: String(err.message).slice(0, 500),
             updated_at: new Date().toISOString(),
           })
           .eq('id', post.id);
+        if (fErr) console.error('publish-due : échec non enregistré', post.id, fErr.message);
         results.failed += 1;
       }
     }
@@ -131,73 +171,102 @@ async function publishDue(req, res) {
     res.json({ success: true, at: nowIso, ...results });
   } catch (err) {
     console.error('publish-due :', err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Erreur interne du job.' });
   }
 }
 
-// Rédaction automatique, puis rappels de tournage pour tous les espaces
+// GET|POST /api/internal/content-job : rédaction automatique uniquement
 async function contentJob(req, res) {
   if (!isAuthorized(req)) return res.status(401).json({ success: false, error: 'Non autorisé.' });
 
   try {
     const admin = getSupabaseAdmin();
     const t0 = Date.now();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = parisToday();
 
     const { data: spaces, error } = await admin
       .from('owner_settings')
       .select('owner_id, claude_key_encrypted, reference_calendar')
       .not('claude_key_encrypted', 'is', null)
-      .eq('auto_generate', true);
-    if (error) return res.status(500).json({ success: false, error: error.message });
+      .eq('auto_generate', true)
+      .range(0, 4999);
+    if (error) throw new Error(error.message);
 
-    const report = [];
+    const summary = { spaces: 0, generated: 0, skipped: 0, errors: 0, budgetReached: false };
+
     for (const s of spaces || []) {
       if (Date.now() - t0 > CONTENT_BUDGET_MS) {
-        report.push({ skipped: 'durée maximale atteinte, reprise à la prochaine exécution' });
+        summary.budgetReached = true;
         break;
       }
+      summary.spaces += 1;
 
       const reference = s.reference_calendar?.content
         ? String(s.reference_calendar.content).slice(0, 100000)
         : null;
       if (!reference) {
-        report.push({ owner: s.owner_id, skipped: 'calendrier de référence absent' });
+        summary.skipped += 1;
         continue;
       }
 
       try {
         const apiKey = decryptSecret(s.claude_key_encrypted);
         if (!apiKey) throw new Error('clé illisible');
-        const result = await runContentAutomation({ db: admin, ownerId: s.owner_id, apiKey, reference });
-        report.push({ owner: s.owner_id, ...result });
+        await runContentAutomation({ db: admin, ownerId: s.owner_id, apiKey, reference, today });
+        summary.generated += 1;
       } catch (err) {
-        report.push({ owner: s.owner_id, error: err.message });
+        console.error('content-job : espace', s.owner_id, ':', err.message);
+        summary.errors += 1;
       }
     }
 
-    // Rappels de tournage : indépendants de la clé Claude
-    const { data: owners, error: oErr } = await admin.from('owner_settings').select('owner_id');
-    if (!oErr) {
-      for (const o of owners || []) {
-        try {
-          const r = await sendVideoReminders({ admin, ownerId: o.owner_id, today });
-          if (r.sent) report.push({ owner: o.owner_id, reminders: r.sent });
-        } catch (err) {
-          report.push({ owner: o.owner_id, reminderError: err.message });
-        }
-      }
-    }
-
-    res.json({ success: true, report });
+    res.json({ success: true, today, ...summary });
   } catch (err) {
     console.error('content-job :', err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Erreur interne du job.' });
+  }
+}
+
+// GET|POST /api/internal/reminders : rappels de tournage, un espace à la fois
+async function remindersJob(req, res) {
+  if (!isAuthorized(req)) return res.status(401).json({ success: false, error: 'Non autorisé.' });
+
+  try {
+    const admin = getSupabaseAdmin();
+    const today = parisToday();
+
+    const { data: owners, error } = await admin
+      .from('owner_settings')
+      .select('owner_id')
+      .range(0, 4999);
+    if (error) throw new Error(error.message);
+
+    const summary = { spaces: 0, sent: 0, errors: 0 };
+
+    for (const o of owners || []) {
+      summary.spaces += 1;
+      try {
+        const r = await sendVideoReminders({ admin, ownerId: o.owner_id, today });
+        summary.sent += r.sent || 0;
+      } catch (err) {
+        // Un espace en erreur n'empêche pas les autres ; le détail reste dans les journaux
+        console.error('reminders : espace', o.owner_id, ':', err.message);
+        summary.errors += 1;
+      }
+    }
+
+    res.json({ success: true, today, ...summary });
+  } catch (err) {
+    console.error('reminders :', err);
+    res.status(500).json({ success: false, error: 'Erreur interne du job.' });
   }
 }
 
 router.get('/publish-due', publishDue);
 router.post('/publish-due', publishDue);
 router.get('/content-job', contentJob);
+router.post('/content-job', contentJob);
+router.get('/reminders', remindersJob);
+router.post('/reminders', remindersJob);
 
 export default router;
