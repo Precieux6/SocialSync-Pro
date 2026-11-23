@@ -555,8 +555,10 @@ async function dueJobs(db, ownerId, today) {
   );
 }
 
-// Cycle complet d'un espace : crée les blocs, puis traite d'abord les scripts longs,
-// puis les lots légers et longs, dans la limite de budgetMs.
+// Cycle d'un espace. Options :
+// - scriptsOnly : ne traite que les scripts longs (route scripts-job)
+// - skipScripts : ne traite pas les scripts longs (route content-job)
+// Sans option, les deux phases s'enchaînent, scripts d'abord.
 export async function runContentAutomation({
   db,
   ownerId,
@@ -564,6 +566,8 @@ export async function runContentAutomation({
   reference,
   today = parisToday(),
   budgetMs = TIME_BUDGET_MS,
+  scriptsOnly = false,
+  skipScripts = false,
 }) {
   const deadline = Date.now() + budgetMs;
   const left = () => deadline - Date.now();
@@ -607,19 +611,24 @@ export async function runContentAutomation({
     }
   };
 
-  // Phase 1 : scripts longs
   let stop = false;
-  while (!stop && left() > SCRIPT_START_MS) {
-    const next = (await dueJobs(db, ownerId, today)).find((j) => j.kind === 'script' && !failed.has(j.key));
-    if (!next) break;
-    if ((await runJob(next)) === 'stop') stop = true;
+
+  // Phase 1 : scripts longs
+  if (!skipScripts) {
+    while (!stop && left() > SCRIPT_START_MS) {
+      const next = (await dueJobs(db, ownerId, today)).find((j) => j.kind === 'script' && !failed.has(j.key));
+      if (!next) break;
+      if ((await runJob(next)) === 'stop') stop = true;
+    }
   }
 
   // Phase 2 : lots légers et longs
-  while (!stop && left() > LIGHT_START_MS) {
-    const next = (await dueJobs(db, ownerId, today)).find((j) => j.kind !== 'script' && !failed.has(j.key));
-    if (!next) break;
-    if ((await runJob(next)) === 'stop') stop = true;
+  if (!scriptsOnly) {
+    while (!stop && left() > LIGHT_START_MS) {
+      const next = (await dueJobs(db, ownerId, today)).find((j) => j.kind !== 'script' && !failed.has(j.key));
+      if (!next) break;
+      if ((await runJob(next)) === 'stop') stop = true;
+    }
   }
 
   return report;
