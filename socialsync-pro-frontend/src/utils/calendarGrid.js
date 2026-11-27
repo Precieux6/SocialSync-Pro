@@ -1,6 +1,6 @@
 // socialsync-pro-frontend/src/utils/calendarGrid.js
-// Grille mensuelle façon Meta Business Suite : semaines du dimanche au samedi.
-// La semaine 1 est celle qui contient le 1er du mois. Le dimanche d'ouverture sert de clé (week_start).
+// Semaines du dimanche au samedi, façon Meta Business Suite.
+// Le dimanche d'ouverture d'une semaine sert de clé (week_start) côté serveur.
 
 export const MONTH_NAMES = [
   'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
@@ -22,33 +22,42 @@ const weekdayOf = (iso) => new Date(msOf(iso)).getUTCDay(); // dimanche = 0
 export const startOfWeek = (iso) => addDays(iso, -weekdayOf(iso));
 export const endOfWeek = (iso) => addDays(startOfWeek(iso), 6);
 
-// Semaines affichées pour un mois (monthIndex : 0 = janvier)
+// Une semaine de 7 jours.
+// monthIndex null : tous les jours sont considérés comme appartenant au mois affiché (vue Semaine).
+function makeWeek(weekStart, weekNum, monthIndex) {
+  return {
+    weekStart,
+    weekNum,
+    days: DAY_LABELS.map((label, d) => {
+      const date = addDays(weekStart, d);
+      return {
+        date,
+        label,
+        day: Number(date.slice(8, 10)),
+        inMonth: monthIndex === null || Number(date.slice(5, 7)) === monthIndex + 1,
+      };
+    }),
+  };
+}
+
+// Vue Mois : toutes les semaines qui touchent le mois (monthIndex : 0 = janvier)
 export function buildMonthWeeks(year, monthIndex) {
   const first = isoOfMs(Date.UTC(year, monthIndex, 1));
   const last = isoOfMs(Date.UTC(year, monthIndex + 1, 0));
   const from = startOfWeek(first);
   const to = endOfWeek(last);
-  const rows = Math.round((msOf(to) - msOf(from)) / DAY_MS) / 7 + 1;
-  const month = monthIndex + 1;
+  const count = (Math.round((msOf(to) - msOf(from)) / DAY_MS) + 1) / 7;
 
-  const weeks = Array.from({ length: rows }, (_, w) => {
-    const weekStart = addDays(from, w * 7);
-    return {
-      weekStart,
-      weekNum: w + 1,
-      days: DAY_LABELS.map((label, d) => {
-        const date = addDays(weekStart, d);
-        return {
-          date,
-          label,
-          day: Number(date.slice(8, 10)),
-          inMonth: Number(date.slice(5, 7)) === month,
-        };
-      }),
-    };
-  });
-
+  const weeks = Array.from({ length: count }, (_, w) =>
+    makeWeek(addDays(from, w * 7), w + 1, monthIndex)
+  );
   return { from, to, weeks };
+}
+
+// Vue Semaine : uniquement la semaine qui contient la date d'ancrage
+export function buildWeek(anchor) {
+  const from = startOfWeek(anchor);
+  return { from, to: endOfWeek(anchor), weeks: [makeWeek(from, null, null)] };
 }
 
 export const dayMonth = (iso) =>
