@@ -1,17 +1,25 @@
 // socialsync-pro-backend/src/routes/calendar.js
 import express from 'express';
 import { requireOwner } from '../middleware/auth.js';
-import { ensureBlock, weekNumOf } from '../services/calendarBlocks.js';
+import {
+  addDays,
+  dayIndexOf,
+  ensureRange,
+  isMonday,
+  isValidIsoDate,
+  isoWeekNumber,
+} from '../services/calendarBlocks.js';
 import { FORMATS } from '../config/formats.js';
 
 const router = express.Router();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TAG_RE = /^[@#]?[\p{L}\p{N}_.\-]{1,50}$/u;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const LOCAL_DT_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
 const DEFAULT_TZ = 'Europe/Paris';
 const HTTPS_RE = /^https:\/\//;
+const MAX_RANGE_DAYS = 42;
+const MIN_RANGE_DAYS = 7;
 
 // Champs dont la modification remet un contenu généré en attente de relecture
 const CONTENT_KEYS = [
@@ -19,28 +27,19 @@ const CONTENT_KEYS = [
   'tags', 'script', 'slides', 'media_urls', 'video_url',
 ];
 
-const isoOf = (d) => d.toISOString().slice(0, 10);
+// Plage demandée par l'interface : du lundi au dimanche, de 7 à 42 jours
+function parseRange(req) {
+  const from = String(req.query.from || '');
+  const to = String(req.query.to || '');
+  if (!isValidIsoDate(from) || !isValidIsoDate(to)) return { error: 'Dates invalides (YYYY-MM-DD).' };
+  if (!isMonday(from)) return { error: 'La période doit commencer un lundi.' };
+  if (dayIndexOf(to) !== 6) return { error: 'La période doit se terminer un dimanche.' };
 
-const addDays = (iso, n) => {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return isoOf(d);
-};
-
-const isValidDate = (iso) =>
-  DATE_RE.test(iso) && !Number.isNaN(new Date(`${iso}T00:00:00Z`).getTime());
-
-const dayIndexOf = (iso) => (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7;
-
-function parseBlock(req) {
-  const start = String(req.query.start || '');
-  const startWeek = parseInt(req.query.startWeek ?? '1', 10);
-  if (!isValidDate(start)) return { error: 'Date de début invalide (YYYY-MM-DD).' };
-  if (dayIndexOf(start) !== 0) return { error: 'La période doit commencer un lundi.' };
-  if (!Number.isInteger(startWeek) || startWeek < 1 || startWeek > 13) {
-    return { error: 'Semaine de départ invalide (1 à 13).' };
+  const span = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 864e5) + 1;
+  if (span < MIN_RANGE_DAYS || span > MAX_RANGE_DAYS) {
+    return { error: `Période hors limite (${MIN_RANGE_DAYS} à ${MAX_RANGE_DAYS} jours).` };
   }
-  return { start, startWeek };
+  return { from, to };
 }
 
 export function isValidTimezone(tz) {
@@ -97,13 +96,14 @@ async function spaceTimezone(req) {
   }
 }
 
-// Thèmes indexés par date de début de semaine (lundi), ex. { "2026-12-07": "Titre" }
-async function loadThemes(req) {
+// Thèmes indexés par lundi de semaine, limités à la plage affichée
+async function loadThemes(req, from, to) {
   const { data, error } = await req.db
     .from('weeks_themes')
     .select('week_start, title')
     .eq('owner_id', req.ownerId)
-    .not('week_start', 'is', null);
+    .gte('week_start', from)
+    .lte('week_start', to);
   if (error) throw new Error(error.message);
   return Object.fromEntries((data || []).map((t) => [t.week_start, t.title]));
 }
@@ -140,73 +140,69 @@ router.get('/themes', async (req, res) => {
   }
 });
 
-// Saisie d'un thème pour la semaine qui commence au lundi weekStart (YYYY-MM-DD)
+// Saisie d'un thème pour la semaine qui commence au lundi weekStart (YYYY-MM-DD).
+// La rédaction de la semaine est ensuite lancée par l'interface via /ai/generate-week.
 router.put('/themes/:weekStart', requireOwner, async (req, res) => {
   const weekStart = String(req.params.weekStart || '');
   const title = String(req.body?.title || '').trim().slice(0, 200);
 
-  if (!isValidDate(weekStart) || dayIndexOf(weekStart) !== 0) {
+  if (!isMonday(weekStart)) {
     return res.status(400).json({ success: false, error: 'Date de semaine invalide (un lundi au format YYYY-MM-DD).' });
   }
   if (!title) return res.status(400).json({ success: false, error: 'Titre vide.' });
 
   try {
-    // Un thème saisi à la main n'est plus considéré comme généré
-    const { data: updated, error: uErr } = await req.db
+    // Un thème saisi à la main remplace toute proposition de Claude et n'est plus marqué comme généré
+    const { data, error } = await req.db
       .from('weeks_themes')
-      .update({ title, ai_generated: false })
-      .eq('owner_id', req.ownerId)
-      .eq('week_start', weekStart)
-      .select();
-    if (uErr) return res.status(500).json({ success: false, error: uErr.message });
-
-    if (updated && updated.length > 0) {
-      return res.json({ success: true, updatedWeek: updated[0] });
-    }
-
-    const { data: created, error: cErr } = await req.db
-      .from('weeks_themes')
-      .insert([{
+      .upsert([{
         owner_id: req.ownerId,
         user_id: req.user.id,
         week_start: weekStart,
-        week: weekNumOf(weekStart),
+        week: isoWeekNumber(weekStart),
         title,
         ai_generated: false,
-      }])
+      }], { onConflict: 'owner_id,week_start' })
       .select()
       .single();
-    if (cErr) return res.status(500).json({ success: false, error: cErr.message });
-    res.status(201).json({ success: true, updatedWeek: created });
+    if (error) return res.status(500).json({ success: false, error: error.message });
+
+    res.json({
+      success: true,
+      updatedWeek: data,
+      generation: { pending: true, weekStart },
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
+// Publications d'une plage (du lundi au dimanche). Les publications manquantes sont créées avant lecture.
 router.get('/posts', async (req, res) => {
-  const block = parseBlock(req);
-  if (block.error) return res.status(400).json({ success: false, error: block.error });
+  const range = parseRange(req);
+  if (range.error) return res.status(400).json({ success: false, error: range.error });
 
   try {
-    await ensureBlock(req.db, req.ownerId, block.start, block.startWeek);
-    const end = addDays(block.start, 27);
+    await ensureRange(req.db, req.ownerId, range.from, range.to);
 
     const { data, error } = await req.db
       .from('editorial_posts')
       .select('*')
       .eq('owner_id', req.ownerId)
-      .gte('post_date', block.start)
-      .lte('post_date', end)
+      .gte('post_date', range.from)
+      .lte('post_date', range.to)
       .order('post_date', { ascending: true })
-      .order('format', { ascending: true });
+      .order('publish_time', { ascending: true });
     if (error) return res.status(500).json({ success: false, error: error.message });
 
-    const [themes, timezone] = await Promise.all([loadThemes(req), spaceTimezone(req)]);
+    const [themes, timezone] = await Promise.all([
+      loadThemes(req, range.from, range.to),
+      spaceTimezone(req),
+    ]);
     res.json({
       success: true,
-      start: block.start,
-      end,
-      startWeek: block.startWeek,
+      from: range.from,
+      to: range.to,
       themes,
       timezone,
       posts: data || [],
@@ -216,16 +212,13 @@ router.get('/posts', async (req, res) => {
   }
 });
 
+// Publication hors plan. Le numéro de semaine ISO est calculé par le serveur.
 router.post('/posts', async (req, res) => {
   const postDate = String(req.body?.post_date || '');
   const format = String(req.body?.format || '');
-  const weekNum = parseInt(req.body?.week_num, 10);
 
-  if (!isValidDate(postDate)) return res.status(400).json({ success: false, error: 'Date invalide.' });
+  if (!isValidIsoDate(postDate)) return res.status(400).json({ success: false, error: 'Date invalide.' });
   if (!FORMATS.includes(format)) return res.status(400).json({ success: false, error: 'Format invalide.' });
-  if (!Number.isInteger(weekNum) || weekNum < 1 || weekNum > 13) {
-    return res.status(400).json({ success: false, error: 'Semaine invalide.' });
-  }
 
   try {
     const { data, error } = await req.db
@@ -233,7 +226,7 @@ router.post('/posts', async (req, res) => {
       .insert([{
         owner_id: req.ownerId,
         post_date: postDate,
-        week_num: weekNum,
+        week_num: isoWeekNumber(postDate),
         day_index: dayIndexOf(postDate),
         format,
         platform: 'instagram',
