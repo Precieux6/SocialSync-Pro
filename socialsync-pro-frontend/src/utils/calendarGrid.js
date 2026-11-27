@@ -1,57 +1,53 @@
 // socialsync-pro-frontend/src/utils/calendarGrid.js
+// Grille mensuelle façon Meta Business Suite : semaines du dimanche au samedi.
+// La semaine 1 est celle qui contient le 1er du mois. Le dimanche d'ouverture sert de clé (week_start).
+
 export const MONTH_NAMES = [
   'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
   'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
 ];
 
-export const DAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+export const DAY_LABELS = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
 
 const DAY_MS = 864e5;
 const isoOfMs = (ms) => new Date(ms).toISOString().slice(0, 10);
+const msOf = (iso) => Date.parse(`${iso}T00:00:00Z`);
 
 export const todayIso = () => isoOfMs(Date.now());
 
-export function addDays(iso, n) {
-  return isoOfMs(Date.parse(`${iso}T00:00:00Z`) + n * DAY_MS);
-}
+export const addDays = (iso, n) => isoOfMs(msOf(iso) + n * DAY_MS);
 
-const dayIndex = (iso) => (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7;
+const weekdayOf = (iso) => new Date(msOf(iso)).getUTCDay(); // dimanche = 0
 
-export const mondayOf = (iso) => addDays(iso, -dayIndex(iso));
-export const sundayOf = (iso) => addDays(mondayOf(iso), 6);
+export const startOfWeek = (iso) => addDays(iso, -weekdayOf(iso));
+export const endOfWeek = (iso) => addDays(startOfWeek(iso), 6);
 
-export function isoWeekNumber(iso) {
-  const thursday = addDays(mondayOf(iso), 3);
-  const year = Number(thursday.slice(0, 4));
-  const firstThursday = addDays(mondayOf(`${year}-01-04`), 3);
-  return 1 + Math.round((Date.parse(`${thursday}T00:00:00Z`) - Date.parse(`${firstThursday}T00:00:00Z`)) / (7 * DAY_MS));
-}
-
-// Semaines complètes couvrant un mois (monthIndex : 0 = janvier)
+// Semaines affichées pour un mois (monthIndex : 0 = janvier)
 export function buildMonthWeeks(year, monthIndex) {
   const first = isoOfMs(Date.UTC(year, monthIndex, 1));
   const last = isoOfMs(Date.UTC(year, monthIndex + 1, 0));
-  const from = mondayOf(first);
-  const to = sundayOf(last);
-  const count = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS) + 1;
+  const from = startOfWeek(first);
+  const to = endOfWeek(last);
+  const rows = Math.round((msOf(to) - msOf(from)) / DAY_MS) / 7 + 1;
+  const month = monthIndex + 1;
 
-  const weeks = [];
-  for (let w = 0; w < count / 7; w++) {
+  const weeks = Array.from({ length: rows }, (_, w) => {
     const weekStart = addDays(from, w * 7);
-    weeks.push({
+    return {
       weekStart,
-      weekNum: isoWeekNumber(weekStart),
+      weekNum: w + 1,
       days: DAY_LABELS.map((label, d) => {
         const date = addDays(weekStart, d);
         return {
           date,
           label,
           day: Number(date.slice(8, 10)),
-          inMonth: Number(date.slice(5, 7)) === monthIndex + 1,
+          inMonth: Number(date.slice(5, 7)) === month,
         };
       }),
-    });
-  }
+    };
+  });
+
   return { from, to, weeks };
 }
 
