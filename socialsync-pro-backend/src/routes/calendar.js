@@ -1,6 +1,6 @@
 // socialsync-pro-backend/src/routes/calendar.js
 import express from 'express';
-import { requireOwner } from '../middleware/auth.js';
+import { requireOwner, requireRole } from '../middleware/auth.js';
 import {
   dayIndexOf,
   ensureRange,
@@ -20,6 +20,9 @@ const DEFAULT_TZ = 'Europe/Paris';
 const HTTPS_RE = /^https:\/\//;
 const MAX_RANGE_DAYS = 42;
 const MIN_RANGE_DAYS = 7;
+
+// Rôles autorisés à saisir ou modifier un thème de semaine (lecture seule exclue)
+const THEME_EDITORS = requireRole('Propriétaire', 'Éditeur', 'Community Manager');
 
 // Champs dont la modification remet un contenu généré en attente de relecture
 const CONTENT_KEYS = [
@@ -141,8 +144,8 @@ router.get('/themes', async (req, res) => {
 });
 
 // Saisie d'un thème pour la semaine qui commence au dimanche weekStart (YYYY-MM-DD).
-// La rédaction de la semaine est ensuite lancée par l'interface via /ai/generate-week.
-router.put('/themes/:weekStart', requireOwner, async (req, res) => {
+// Propriétaire, Éditeur et Community Manager. La rédaction est ensuite lancée par l'interface via /ai/generate-week.
+router.put('/themes/:weekStart', THEME_EDITORS, async (req, res) => {
   const weekStart = String(req.params.weekStart || '');
   const title = String(req.body?.title || '').trim().slice(0, 200);
 
