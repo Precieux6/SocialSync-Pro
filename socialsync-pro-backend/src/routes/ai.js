@@ -5,12 +5,13 @@ import rateLimit from 'express-rate-limit';
 import { decryptSecret } from '../utils/crypto.js';
 import { requireRole } from '../middleware/auth.js';
 import { runContentAutomation, runWeekStep } from '../services/contentPlanner.js';
-import { isMonday } from '../services/calendarBlocks.js';
+import { isWeekStart } from '../services/calendarBlocks.js';
 
 const router = express.Router();
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const PLATFORMS = ['instagram', 'facebook', 'youtube', 'tiktok'];
-const MANUAL_BUDGET_MS = 240_000; // bouton manuel : la fonction peut aller jusqu'à 300 s
+// Plan Vercel Hobby : 60 s maximum par fonction
+const MANUAL_BUDGET_MS = 50_000;
 
 const SYSTEM_PROMPT = `
 Vous êtes l'assistant éditorial officiel pour SocialSync Pro.
@@ -138,14 +139,14 @@ router.post(
   }
 );
 
-// POST /api/ai/generate-week : une étape de rédaction pour une semaine (appelée en boucle par l'interface)
+// POST /api/ai/generate-week : une étape de rédaction pour une semaine (dimanche d'ouverture)
 router.post(
   '/generate-week',
   requireRole('Propriétaire', 'Éditeur', 'Community Manager'),
   async (req, res) => {
     const weekStart = String(req.body?.weekStart || '');
-    if (!isMonday(weekStart)) {
-      return res.status(400).json({ success: false, error: 'Semaine invalide (un lundi au format YYYY-MM-DD).' });
+    if (!isWeekStart(weekStart)) {
+      return res.status(400).json({ success: false, error: 'Semaine invalide (un dimanche au format YYYY-MM-DD).' });
     }
 
     try {
