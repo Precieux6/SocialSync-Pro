@@ -4,7 +4,7 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import PostEditor from '../components/calendar/PostEditor';
 import {
-  DAY_LABELS, MONTH_NAMES, buildMonthWeeks, dayMonth, shortDate, startOfWeek, todayIso,
+  MONTH_NAMES, addDays, buildMonthWeeks, buildWeek, dayMonth, shortDate, startOfWeek, todayIso,
 } from '../utils/calendarGrid';
 import { FORMATS } from '../constants/formats';
 
@@ -34,6 +34,12 @@ const badgeOf = (post) => {
     label: STATUS_LABEL[post.status] || post.status,
     style: STATUS_STYLE[post.status] || STATUS_STYLE.brouillon,
   };
+};
+
+// Premier jour du mois de la date donnée, décalé de delta mois
+const shiftMonthAnchor = (iso, delta) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + delta, 1)).toISOString().slice(0, 10);
 };
 
 function AddPostModal({ date, onClose, onCreated, notify }) {
@@ -79,12 +85,16 @@ function AddPostModal({ date, onClose, onCreated, notify }) {
 
 export default function CalendarPage({ notify }) {
   const { isOwner, userRole } = useAuth();
-  const [cursor, setCursor] = useState(() => {
-    const [y, m] = todayIso().split('-').map(Number);
-    return { year: y, month: m - 1 };
-  });
-  const { from, to, weeks } = useMemo(() => buildMonthWeeks(cursor.year, cursor.month), [cursor]);
+  const [mode, setMode] = useState('month'); // 'month' | 'week'
+  const [anchor, setAnchor] = useState(() => todayIso());
   const today = todayIso();
+
+  const view = useMemo(() => {
+    if (mode === 'week') return buildWeek(anchor);
+    const [y, m] = anchor.split('-').map(Number);
+    return buildMonthWeeks(y, m - 1);
+  }, [mode, anchor]);
+  const { from, to, weeks } = view;
 
   const [posts, setPosts] = useState([]);
   const [themes, setThemes] = useState({});
@@ -129,11 +139,13 @@ export default function CalendarPage({ notify }) {
   const selected = posts.find((p) => p.id === selectedId) || null;
   const selectedTheme = selected ? themes[startOfWeek(selected.post_date)] || NO_THEME : '';
 
-  const shiftMonth = (delta) =>
-    setCursor((c) => {
-      const d = new Date(Date.UTC(c.year, c.month + delta, 1));
-      return { year: d.getUTCFullYear(), month: d.getUTCMonth() };
-    });
+  const goPrev = () => setAnchor((a) => (mode === 'week' ? addDays(a, -7) : shiftMonthAnchor(a, -1)));
+  const goNext = () => setAnchor((a) => (mode === 'week' ? addDays(a, 7) : shiftMonthAnchor(a, 1)));
+  const goToday = () => setAnchor(todayIso());
+
+  const titleLabel = mode === 'week'
+    ? `Du ${dayMonth(from)} au ${dayMonth(to)} ${to.slice(0, 4)}`
+    : `${MONTH_NAMES[Number(anchor.slice(5, 7)) - 1]} ${anchor.slice(0, 4)}`;
 
   // Rédige une semaine étape par étape. Chaque appel rédige une publication ou une partie de script.
   const generateWeek = async (weekStart) => {
@@ -191,7 +203,7 @@ export default function CalendarPage({ notify }) {
 
   return (
     <div className="space-y-6">
-      <div className="bg-[#FAF7F2] p-6 rounded-3xl border border-[#E2D5C3] flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-[#FAF7F2] p-6 rounded-3xl border border-[#E2D5C3] flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-serif font-bold text-stone-900">Calendrier éditorial</h2>
           <p className="text-xs text-stone-500 mt-1">
@@ -199,20 +211,27 @@ export default function CalendarPage({ notify }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => shiftMonth(-1)} className="px-3 py-2 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 font-bold">‹</button>
-          <div className="min-w-[170px] text-center font-serif font-bold text-stone-900">
-            {MONTH_NAMES[cursor.month]} {cursor.year}
+          <div className="inline-flex rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] p-1">
+            {[['week', 'Semaine'], ['month', 'Mois']].map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setMode(id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  mode === id ? 'bg-white text-stone-900 shadow' : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          <button onClick={() => shiftMonth(1)} className="px-3 py-2 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 font-bold">›</button>
-          <button
-            onClick={() => {
-              const [y, m] = todayIso().split('-').map(Number);
-              setCursor({ year: y, month: m - 1 });
-            }}
-            className="px-3 py-2 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-xs font-bold text-stone-800"
-          >
+          <button onClick={goPrev} className="px-3 py-2 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 font-bold">‹</button>
+          <button onClick={goToday} className="px-3 py-2 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-xs font-bold text-stone-800">
             Aujourd'hui
           </button>
+          <button onClick={goNext} className="px-3 py-2 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 font-bold">›</button>
+          <div className="min-w-[200px] text-center font-serif font-bold text-stone-900 text-sm">
+            {titleLabel}
+          </div>
         </div>
       </div>
 
@@ -229,13 +248,6 @@ export default function CalendarPage({ notify }) {
 
       <div className="bg-[#FAF7F2] border-2 border-[#D6AC66]/60 rounded-3xl p-4 overflow-x-auto">
         <div className="min-w-[860px] space-y-4">
-          <div className="grid grid-cols-[90px_repeat(7,minmax(0,1fr))] gap-2 text-[10px] font-bold uppercase tracking-wider text-stone-600">
-            <div>Semaine</div>
-            {DAY_LABELS.map((label) => (
-              <div key={label} className="px-2">{label}</div>
-            ))}
-          </div>
-
           {weeks.map((week) => {
             const title = themes[week.weekStart];
             const busy = busyWeek === week.weekStart;
@@ -261,7 +273,7 @@ export default function CalendarPage({ notify }) {
                   ) : (
                     <div className="flex-1 min-w-0">
                       <span className="text-[10px] font-bold text-gold-700 uppercase tracking-wider">
-                        S{week.weekNum} · du {dayMonth(week.days[0].date)} au {dayMonth(week.days[6].date)}
+                        {week.weekNum ? `S${week.weekNum} · ` : ''}du {dayMonth(week.days[0].date)} au {dayMonth(week.days[6].date)}
                       </span>
                       <h3 className={`font-serif font-bold text-base uppercase tracking-wide truncate ${title ? 'text-stone-900' : 'text-stone-400 italic normal-case'}`}>
                         {title || NO_THEME}
@@ -279,22 +291,20 @@ export default function CalendarPage({ notify }) {
                         Modifier le thème
                       </button>
                     )}
-                    {canGenerate && title && !busy && (
+                    {canGenerate && (
                       <button
                         onClick={() => generateWeek(week.weekStart)}
                         disabled={busyWeek !== null}
+                        title="Relance la rédaction des publications vides de cette semaine"
                         className="bg-stone-900 text-amber-200 hover:bg-stone-800 text-xs font-bold px-3 py-1.5 rounded-full disabled:opacity-50"
                       >
-                        Rédiger 🤖
+                        {busy ? 'En cours...' : 'Rédiger 🤖'}
                       </button>
                     )}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-[90px_repeat(7,minmax(0,1fr))] gap-2">
-                  <div className="rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] p-2 text-[10px] font-bold text-stone-600">
-                    S{week.weekNum}
-                  </div>
+                <div className="grid grid-cols-7 gap-2">
                   {week.days.map((day) => (
                     <div
                       key={day.date}
@@ -302,8 +312,11 @@ export default function CalendarPage({ notify }) {
                         day.inMonth ? 'bg-white' : 'bg-[#F4EFE6]/50 opacity-60'
                       } ${day.date === today ? 'ring-2 ring-gold-500' : ''}`}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-stone-800">{day.day}</span>
+                      <div className="flex items-start justify-between">
+                        <div className="leading-tight">
+                          <span className="block text-[9px] font-bold uppercase tracking-wider text-stone-500">{day.label}</span>
+                          <span className="text-xs font-bold text-stone-800">{day.day}</span>
+                        </div>
                         <button
                           onClick={() => setAdding({ date: day.date })}
                           title="Ajouter une publication hors plan"
