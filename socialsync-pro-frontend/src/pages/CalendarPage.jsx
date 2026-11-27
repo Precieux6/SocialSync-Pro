@@ -3,11 +3,14 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import PostEditor from '../components/calendar/PostEditor';
-import { MONTHS_LIST, DAY_LABELS, addDays, weekStartFor, shortDate } from '../utils/calendarGrid';
+import {
+  DAY_LABELS, MONTH_NAMES, buildMonthWeeks, dayMonth, mondayOf, shortDate, todayIso,
+} from '../utils/calendarGrid';
 import { FORMATS } from '../constants/formats';
 
 const READ_ONLY_ROLE = 'Relecteur / Client';
 const NO_THEME = 'Thème à définir';
+const MAX_STEPS = 40;
 
 const STATUS_STYLE = {
   brouillon: 'bg-stone-100 text-stone-700 border-stone-200',
@@ -23,10 +26,6 @@ const STATUS_LABEL = {
   echec: 'Échec',
 };
 
-// Lundi de la semaine qui contient la date donnée
-const mondayOf = (iso) => addDays(iso, -((new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7));
-
-// Badge d'un post : « À valider » pour un contenu généré et pas encore relu
 const badgeOf = (post) => {
   if (post.ai_generated_at && !post.reviewed_at && post.status === 'brouillon') {
     return { label: 'À valider', style: 'bg-amber-100 text-amber-800 border-amber-200' };
@@ -37,13 +36,13 @@ const badgeOf = (post) => {
   };
 };
 
-function AddPostModal({ date, weekNum, onClose, onCreated, notify }) {
+function AddPostModal({ date, onClose, onCreated, notify }) {
   const [busy, setBusy] = useState(false);
 
   const create = async (format) => {
     setBusy(true);
     try {
-      const r = await api.calendar.createPost({ post_date: date, week_num: weekNum, format });
+      const r = await api.calendar.createPost({ post_date: date, format });
       onCreated(r.post);
     } catch (e) {
       notify(e.message);
@@ -80,22 +79,22 @@ function AddPostModal({ date, weekNum, onClose, onCreated, notify }) {
 
 export default function CalendarPage({ notify }) {
   const { isOwner, userRole } = useAuth();
-  const [year, setYear] = useState(new Date().getUTCFullYear());
-  const [monthCode, setMonthCode] = useState('NOV');
-  const month = MONTHS_LIST.find((m) => m.code === monthCode) || MONTHS_LIST[0];
-  const start = useMemo(() => weekStartFor(year, monthCode), [year, monthCode]);
+  const [cursor, setCursor] = useState(() => {
+    const [y, m] = todayIso().split('-').map(Number);
+    return { year: y, month: m - 1 };
+  });
+  const { from, to, weeks } = useMemo(() => buildMonthWeeks(cursor.year, cursor.month), [cursor]);
+  const today = todayIso();
 
-  // Thèmes indexés par date de début de semaine
-  const [themes, setThemes] = useState({});
-  const [isDefault, setIsDefault] = useState(false);
-  const [timezone, setTimezone] = useState('Europe/Paris');
   const [posts, setPosts] = useState([]);
+  const [themes, setThemes] = useState({});
+  const [timezone, setTimezone] = useState('Europe/Paris');
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [editingWeek, setEditingWeek] = useState(null);
   const [draftTitle, setDraftTitle] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState(null);
-  const [generating, setGenerating] = useState(false);
+  const [busyWeek, setBusyWeek] = useState(null);
   const [adding, setAdding] = useState(null);
 
   const canGenerate = Boolean(userRole) && userRole !== READ_ONLY_ROLE;
@@ -104,60 +103,75 @@ export default function CalendarPage({ notify }) {
     setLoading(true);
     setLoadError(null);
     try {
-      const r = await api.calendar.posts(start, month.startWeek);
+      const r = await api.calendar.posts(from, to);
       setPosts(r.posts || []);
       setThemes(r.themes || {});
-      setIsDefault(Boolean(r.isDefault));
       setTimezone(r.timezone || 'Europe/Paris');
     } catch (e) {
-      // Message persistant : un calendrier vide sans explication est trompeur
       setLoadError(e.message);
       setPosts([]);
     } finally {
       setLoading(false);
     }
-  }, [start, month.startWeek]);
+  }, [from, to]);
 
   useEffect(() => {
     setSelectedId(null);
     load();
   }, [load]);
 
-  const onGenerateNow = async () => {
-    setGenerating(true);
-    try {
-      const r = await api.ai.generateNow();
-      if (!r.requested) {
-        notify('Rien à rédiger : les semaines à venir sont déjà prêtes.');
-      } else {
-        notify(`${r.generated} publication(s) rédigée(s) pour la semaine du ${shortDate(r.weekStart)}.`);
-      }
-      await load();
-    } catch (e) {
-      notify(e.message);
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const weeks = useMemo(() => {
-    return [0, 1, 2, 3].map((i) => {
-      const weekNum = ((month.startWeek - 1 + i) % 13) + 1;
-      const weekStart = addDays(start, i * 7);
-      return {
-        weekNum,
-        weekStart,
-        title: themes[weekStart] || null,
-        days: DAY_LABELS.map((label, d) => {
-          const date = addDays(weekStart, d);
-          return { date, label, posts: posts.filter((p) => p.post_date === date) };
-        }),
-      };
-    });
-  }, [posts, themes, start, month.startWeek]);
+  const postsByDate = useMemo(() => {
+    const map = {};
+    for (const p of posts) (map[p.post_date] ||= []).push(p);
+    return map;
+  }, [posts]);
 
   const selected = posts.find((p) => p.id === selectedId) || null;
   const selectedTheme = selected ? themes[mondayOf(selected.post_date)] || NO_THEME : '';
+
+  const shiftMonth = (delta) =>
+    setCursor((c) => {
+      const d = new Date(Date.UTC(c.year, c.month + delta, 1));
+      return { year: d.getUTCFullYear(), month: d.getUTCMonth() };
+    });
+
+  // Rédige une semaine étape par étape. Chaque appel rédige une publication ou un script.
+  const generateWeek = async (weekStart) => {
+    setBusyWeek(weekStart);
+    let produced = 0;
+    try {
+      for (let step = 0; step < MAX_STEPS; step++) {
+        const r = await api.ai.generateWeek(weekStart);
+        if (r.done) break;
+        if (!r.generated) {
+          throw new Error("Rédaction interrompue : une publication n'a pas pu être rédigée. Le cycle automatique reprendra.");
+        }
+        produced += r.generated;
+      }
+      notify(produced
+        ? `${produced} publication(s) rédigée(s) pour la semaine du ${shortDate(weekStart)}.`
+        : 'Rien à rédiger : cette semaine est déjà prête.');
+    } catch (e) {
+      notify(e.message);
+    } finally {
+      setBusyWeek(null);
+      await load();
+    }
+  };
+
+  const saveTheme = async (weekStart) => {
+    const title = draftTitle.trim();
+    if (!title) return;
+    try {
+      await api.calendar.updateTheme(weekStart, title);
+      setEditingWeek(null);
+      notify(`Thème de la semaine du ${shortDate(weekStart)} enregistré. Rédaction lancée.`);
+      await load();
+      generateWeek(weekStart);
+    } catch (e) {
+      notify(e.message);
+    }
+  };
 
   const onPostUpdated = (updated) => {
     setPosts((list) => list.map((p) => (p.id === updated.id ? updated : p)));
@@ -171,24 +185,8 @@ export default function CalendarPage({ notify }) {
   const onPostCreated = async (post) => {
     setAdding(null);
     await load();
-    if (post && post.id) {
-      setSelectedId(post.id);
-    }
+    if (post?.id) setSelectedId(post.id);
     notify('Publication ajoutée.');
-  };
-
-  // weekStart : lundi de la semaine (YYYY-MM-DD)
-  const saveTheme = async (weekStart) => {
-    const title = draftTitle.trim();
-    if (!title) return;
-    try {
-      await api.calendar.updateTheme(weekStart, title);
-      setEditingWeek(null);
-      notify(`Thème de la semaine du ${shortDate(weekStart)} enregistré.`);
-      await load();
-    } catch (e) {
-      notify(e.message);
-    }
   };
 
   return (
@@ -197,155 +195,158 @@ export default function CalendarPage({ notify }) {
         <div>
           <h2 className="text-2xl font-serif font-bold text-stone-900">Calendrier éditorial</h2>
           <p className="text-xs text-stone-500 mt-1">
-            Cliquez sur une publication pour rédiger son brief, sa légende et son visuel. Le « + » ajoute une publication hors calendrier.
+            Cliquez sur une publication pour la rédiger. Le « + » ajoute une publication hors plan.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {canGenerate && (
-            <button
-              onClick={onGenerateNow}
-              disabled={generating || loading}
-              type="button"
-              className="px-4 py-2.5 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold shadow hover:bg-stone-800 disabled:opacity-50 whitespace-nowrap"
-            >
-              {generating ? 'Rédaction en cours...' : 'Générer maintenant 🤖'}
-            </button>
-          )}
-          <select
-            value={monthCode}
-            onChange={(e) => setMonthCode(e.target.value)}
-            className="bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-2.5 text-xs font-bold text-stone-800 focus:outline-none focus:border-gold-500"
+          <button onClick={() => shiftMonth(-1)} className="px-3 py-2 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 font-bold">‹</button>
+          <div className="min-w-[170px] text-center font-serif font-bold text-stone-900">
+            {MONTH_NAMES[cursor.month]} {cursor.year}
+          </div>
+          <button onClick={() => shiftMonth(1)} className="px-3 py-2 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-stone-800 font-bold">›</button>
+          <button
+            onClick={() => {
+              const [y, m] = todayIso().split('-').map(Number);
+              setCursor({ year: y, month: m - 1 });
+            }}
+            className="px-3 py-2 rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] text-xs font-bold text-stone-800"
           >
-            {MONTHS_LIST.map((m) => (
-              <option key={m.code} value={m.code}>{m.name}</option>
-            ))}
-          </select>
-          <input
-            type="number"
-            value={year}
-            min={2024}
-            max={2100}
-            onChange={(e) => setYear(Number(e.target.value))}
-            className="w-24 bg-[#F4EFE6] border border-[#E2D5C3] rounded-xl p-2.5 text-xs font-bold text-stone-800 focus:outline-none focus:border-gold-500"
-          />
+            Aujourd'hui
+          </button>
         </div>
       </div>
 
       {loadError && (
         <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <span>Impossible de charger le calendrier : {loadError}</span>
-          <button
-            onClick={load}
-            className="px-3 py-1.5 rounded-lg bg-white border border-red-200 text-red-700 font-bold hover:bg-red-100 shrink-0"
-          >
+          <button onClick={load} className="px-3 py-1.5 rounded-lg bg-white border border-red-200 text-red-700 font-bold shrink-0">
             Réessayer
           </button>
         </div>
       )}
 
-      {isDefault && isOwner && (
-        <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl">
-          Aucun thème saisi pour cet espace : indiquez le thème de chaque semaine avec « Modifier le thème ».
-        </div>
-      )}
-
       {loading && <p className="text-xs text-stone-500">Chargement du calendrier...</p>}
 
-      {weeks.map((week) => (
-        <div key={week.weekStart} className="bg-[#FAF7F2] border-2 border-[#D6AC66]/60 rounded-3xl p-6 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#E2D5C3] pb-4">
-            <div className="flex-1">
-              <span className="text-xs font-bold text-gold-700 uppercase tracking-wider">
-                Semaine {week.weekNum} · du {shortDate(week.weekStart)}
-              </span>
-              {editingWeek === week.weekStart ? (
-                <div className="flex flex-col sm:flex-row gap-2 mt-2">
-                  <input
-                    type="text"
-                    value={draftTitle}
-                    onChange={(e) => setDraftTitle(e.target.value)}
-                    maxLength={200}
-                    className="flex-1 bg-[#F4EFE6] border border-[#D6AC66] rounded-xl p-2.5 text-sm font-semibold text-stone-900 focus:outline-none"
-                  />
-                  <button onClick={() => saveTheme(week.weekStart)} className="px-4 py-2 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold">
-                    Enregistrer
-                  </button>
-                  <button onClick={() => setEditingWeek(null)} className="px-4 py-2 rounded-xl bg-[#F4EFE6] text-stone-700 text-xs font-bold">
-                    Annuler
-                  </button>
-                </div>
-              ) : (
-                <h3
-                  className={`font-serif font-bold text-lg uppercase tracking-wide mt-1 ${
-                    week.title ? 'text-stone-900' : 'text-stone-400 italic normal-case'
-                  }`}
-                >
-                  {week.title || NO_THEME}
-                </h3>
-              )}
-            </div>
-            {isOwner && editingWeek !== week.weekStart && (
-              <button
-                onClick={() => { setEditingWeek(week.weekStart); setDraftTitle(week.title || ''); }}
-                className="bg-[#FAF7F2] hover:bg-gold-500 hover:text-white text-stone-800 text-xs font-bold px-3 py-1.5 rounded-full border border-gold-600 transition-all"
-              >
-                Modifier le thème
-              </button>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
-            {week.days.map((day) => (
-              <div key={day.date} className="rounded-2xl border border-[#E2D5C3] bg-[#F4EFE6]/50 p-3 min-h-[160px] space-y-2">
-                <div className="border-b border-[#E2D5C3] pb-2 flex items-start justify-between gap-2">
-                  <div>
-                    <span className="font-serif font-bold text-xs uppercase tracking-wider text-stone-800 block">{day.label}</span>
-                    <span className="text-[10px] text-stone-500">{shortDate(day.date)}</span>
-                  </div>
-                  <button
-                    onClick={() => setAdding({ date: day.date, weekNum: week.weekNum })}
-                    title="Ajouter une publication hors calendrier"
-                    className="w-6 h-6 rounded-full bg-[#FAF7F2] border border-[#D6AC66] text-stone-800 font-bold text-sm flex items-center justify-center hover:bg-stone-900 hover:text-amber-200 transition-colors shrink-0"
-                  >
-                    +
-                  </button>
-                </div>
-
-                {day.posts.length === 0 && <p className="text-[11px] text-stone-400 italic">Aucune publication</p>}
-
-                {day.posts.map((post) => {
-                  const badge = badgeOf(post);
-                  return (
-                    <button
-                      key={post.id}
-                      onClick={() => setSelectedId(post.id)}
-                      className={`w-full text-left rounded-xl border p-2 transition-all ${
-                        selectedId === post.id ? 'border-gold-500 bg-white shadow' : 'border-[#E2D5C3] bg-[#FAF7F2] hover:border-gold-500'
-                      }`}
-                    >
-                      <span className="text-[11px] font-bold text-stone-800 block">
-                        {post.format}{post.is_adhoc ? ' · hors plan' : ''}
-                      </span>
-                      <span className={`inline-block mt-1 text-[9px] font-bold px-2 py-0.5 rounded-full border ${badge.style}`}>
-                        {badge.label}
-                      </span>
-                      {post.scheduled_at && post.status === 'programme' && (
-                        <span className="block text-[9px] text-stone-500 mt-1">
-                          {new Date(post.scheduled_at).toLocaleString('fr-FR', {
-                            dateStyle: 'short',
-                            timeStyle: 'short',
-                            timeZone: timezone,
-                          })}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+      <div className="bg-[#FAF7F2] border-2 border-[#D6AC66]/60 rounded-3xl p-4 overflow-x-auto">
+        <div className="min-w-[860px] space-y-4">
+          <div className="grid grid-cols-[90px_repeat(7,minmax(0,1fr))] gap-2 text-[10px] font-bold uppercase tracking-wider text-stone-600">
+            <div>Semaine</div>
+            {DAY_LABELS.map((label) => (
+              <div key={label} className="px-2">{label}</div>
             ))}
           </div>
+
+          {weeks.map((week) => {
+            const title = themes[week.weekStart];
+            const busy = busyWeek === week.weekStart;
+            return (
+              <div key={week.weekStart} className="space-y-2 border-b border-[#E2D5C3] pb-4 last:border-b-0">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  {editingWeek === week.weekStart ? (
+                    <div className="flex flex-1 flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={draftTitle}
+                        onChange={(e) => setDraftTitle(e.target.value)}
+                        maxLength={200}
+                        className="flex-1 bg-[#F4EFE6] border border-[#D6AC66] rounded-xl p-2.5 text-sm font-semibold text-stone-900 focus:outline-none"
+                      />
+                      <button onClick={() => saveTheme(week.weekStart)} className="px-4 py-2 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold">
+                        Enregistrer
+                      </button>
+                      <button onClick={() => setEditingWeek(null)} className="px-4 py-2 rounded-xl bg-[#F4EFE6] text-stone-700 text-xs font-bold">
+                        Annuler
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex-1 min-w-0">
+                      <span className="text-[10px] font-bold text-gold-700 uppercase tracking-wider">
+                        S{week.weekNum} · du {dayMonth(week.days[0].date)} au {dayMonth(week.days[6].date)}
+                      </span>
+                      <h3 className={`font-serif font-bold text-base uppercase tracking-wide truncate ${title ? 'text-stone-900' : 'text-stone-400 italic normal-case'}`}>
+                        {title || NO_THEME}
+                      </h3>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    {busy && <span className="text-[11px] font-bold text-gold-700">Rédaction en cours...</span>}
+                    {isOwner && editingWeek !== week.weekStart && (
+                      <button
+                        onClick={() => { setEditingWeek(week.weekStart); setDraftTitle(title || ''); }}
+                        className="bg-[#FAF7F2] hover:bg-gold-500 hover:text-white text-stone-800 text-xs font-bold px-3 py-1.5 rounded-full border border-gold-600 transition-all"
+                      >
+                        Modifier le thème
+                      </button>
+                    )}
+                    {canGenerate && title && !busy && (
+                      <button
+                        onClick={() => generateWeek(week.weekStart)}
+                        disabled={busyWeek !== null}
+                        className="bg-stone-900 text-amber-200 hover:bg-stone-800 text-xs font-bold px-3 py-1.5 rounded-full disabled:opacity-50"
+                      >
+                        Rédiger 🤖
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-[90px_repeat(7,minmax(0,1fr))] gap-2">
+                  <div className="rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] p-2 text-[10px] font-bold text-stone-600">
+                    S{week.weekNum}
+                  </div>
+                  {week.days.map((day) => (
+                    <div
+                      key={day.date}
+                      className={`rounded-xl border border-[#E2D5C3] p-1.5 min-h-[120px] space-y-1 ${
+                        day.inMonth ? 'bg-white' : 'bg-[#F4EFE6]/50 opacity-60'
+                      } ${day.date === today ? 'ring-2 ring-gold-500' : ''}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-stone-800">{day.day}</span>
+                        <button
+                          onClick={() => setAdding({ date: day.date })}
+                          title="Ajouter une publication hors plan"
+                          className="w-5 h-5 rounded-full bg-[#FAF7F2] border border-[#D6AC66] text-stone-800 font-bold text-xs flex items-center justify-center hover:bg-stone-900 hover:text-amber-200"
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      {(postsByDate[day.date] || []).map((post) => {
+                        const badge = badgeOf(post);
+                        return (
+                          <button
+                            key={post.id}
+                            onClick={() => setSelectedId(post.id)}
+                            className={`w-full text-left rounded-lg border p-1.5 transition-all ${
+                              selectedId === post.id ? 'border-gold-500 bg-white shadow' : 'border-[#E2D5C3] bg-[#FAF7F2] hover:border-gold-500'
+                            }`}
+                          >
+                            <span className="text-[10px] font-bold text-stone-800 block leading-tight">
+                              {post.format}{post.is_adhoc ? ' · hors plan' : ''}
+                            </span>
+                            <span className={`inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${badge.style}`}>
+                              {badge.label}
+                            </span>
+                            {post.scheduled_at && post.status === 'programme' && (
+                              <span className="block text-[9px] text-stone-500 mt-0.5">
+                                {new Date(post.scheduled_at).toLocaleString('fr-FR', {
+                                  dateStyle: 'short', timeStyle: 'short', timeZone: timezone,
+                                })}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
-      ))}
+      </div>
 
       {selected && (
         <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
@@ -367,7 +368,6 @@ export default function CalendarPage({ notify }) {
       {adding && (
         <AddPostModal
           date={adding.date}
-          weekNum={adding.weekNum}
           onClose={() => setAdding(null)}
           onCreated={onPostCreated}
           notify={notify}
