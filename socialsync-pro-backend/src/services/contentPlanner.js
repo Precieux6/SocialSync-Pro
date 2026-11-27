@@ -625,12 +625,13 @@ async function nextWeekJob(db, ownerId, weekStart) {
   return script ? { kind: 'script', post: script } : null;
 }
 
-// Une étape de rédaction pour une semaine. L'interface l'appelle en boucle, une étape par requête.
-export async function runWeekStep({ db, ownerId, apiKey, reference, weekStart }) {
+// Une étape de rédaction pour une semaine. L'interface l'appelle en boucle, ou le job horaire (week-jobs).
+// budgetMs permet au job horaire de borner chaque étape au temps restant de son exécution.
+export async function runWeekStep({ db, ownerId, apiKey, reference, weekStart, budgetMs = STEP_BUDGET_MS }) {
   const next = await nextWeekJob(db, ownerId, weekStart);
   if (!next) return { weekStart, done: true, requested: 0, generated: 0 };
 
-  const deadline = Date.now() + STEP_BUDGET_MS;
+  const deadline = Date.now() + budgetMs;
   try {
     const r = next.kind === 'script'
       ? await scriptJob({ db, ownerId, apiKey, reference, post: next.post, deadline, maxParts: 1 })
