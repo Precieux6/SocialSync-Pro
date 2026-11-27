@@ -1,17 +1,25 @@
 // socialsync-pro-backend/src/services/contentPlanner.js
 import Anthropic from '@anthropic-ai/sdk';
-import { addDays, ensureRange, isoWeekNumber, mondayOf, monthRange } from './calendarBlocks.js';
+import {
+  addDays,
+  dayIndexOf,
+  ensureRange,
+  isoWeekNumber,
+  monthRange,
+  startOfWeek,
+} from './calendarBlocks.js';
 import { loadTemplate, referencesFor } from './weeklyTemplate.js';
 import { HEAVY_FORMATS, LIGHT_FORMATS, LONG_SCRIPT_PARTS, PART_WORDS } from '../config/formats.js';
 
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const MAX_ATTEMPTS = 2;
-const MAX_LIGHT_PER_CALL = 10;
-const TIME_BUDGET_MS = 200_000;
-const STEP_BUDGET_MS = 240_000;    // une étape de rédaction à la demande (route generate-week)
-const SCRIPT_START_MS = 150_000;   // il faut au moins ce temps restant pour lancer un script long
-const LIGHT_START_MS = 30_000;     // il faut au moins ce temps restant pour lancer un lot
-const MIN_REQUEST_MS = 15_000;
+// Plan Vercel Hobby : 60 s maximum par fonction. Budgets réduits en conséquence.
+const MAX_LIGHT_PER_CALL = 4;
+const TIME_BUDGET_MS = 50_000;     // cycle automatique (à passer aussi dans internal.js)
+const STEP_BUDGET_MS = 50_000;     // une étape à la demande (route generate-week)
+const SCRIPT_START_MS = 20_000;    // temps restant minimum pour lancer une partie de script
+const LIGHT_START_MS = 15_000;     // temps restant minimum pour lancer un lot
+const MIN_REQUEST_MS = 10_000;
 const CAPTION_MAX = 2_200;
 const SCRIPT_MAX = 40_000;
 const PROMPT_MAX = 2_000;
@@ -20,8 +28,9 @@ const SLIDES_MAX = 8;
 const TITLE_MAX = 200;
 const TAG_RE = /^[@#]?[\p{L}\p{N}_.\-]{1,50}$/u;
 
-const LIGHT_LEAD_DAYS = 1;   // dimanche précédent le lundi
-const HEAVY_LEAD_DAYS = 6;   // mardi de la semaine précédente
+// Échéances relatives au dimanche d'ouverture de la semaine
+const LIGHT_LEAD_DAYS = 1;   // samedi précédent
+const HEAVY_LEAD_DAYS = 5;   // mardi précédent
 const PARIS_TZ = 'Europe/Paris';
 
 const EXAMPLE_LIMITS = {
@@ -56,7 +65,7 @@ const KIND_LABEL = {
 
 const DAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 
-// Levée quand le budget de temps du cycle est épuisé : ce n'est pas un échec de la tâche
+// Levée quand le budget de temps est épuisé : ce n'est pas un échec de la tâche
 export class BudgetExceeded extends Error {
   constructor() {
     super('Budget de temps épuisé.');
@@ -139,7 +148,6 @@ function clip(v, max) {
   return (space > max * 0.7 ? cut.slice(0, space) : cut).trimEnd();
 }
 
-const dayIndexOf = (iso) => (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7;
 const leadFor = (format) => (HEAVY_FORMATS.includes(format) ? HEAVY_LEAD_DAYS : LIGHT_LEAD_DAYS);
 
 // Délai d'un appel Claude : jamais au-delà du budget restant
@@ -190,7 +198,7 @@ function formatExamples(examples) {
 
 // ---------- Thèmes ----------
 
-// Thèmes indexés par lundi de semaine (week_start), comme dans le calendrier
+// Thèmes indexés par dimanche d'ouverture de semaine (week_start), comme dans le calendrier
 async function loadTheme(db, ownerId, weekStart) {
   if (!weekStart) return null;
   const { data, error } = await db
@@ -203,7 +211,7 @@ async function loadTheme(db, ownerId, weekStart) {
   return data?.title?.trim() || null;
 }
 
-// Ne remplace jamais une saisie existante
+// Ne remplace jamais une saisie manuelle existante
 async function saveProposedTheme(db, ownerId, weekStart, title) {
   const { data: row, error: rErr } = await db
     .from('weeks_themes')
@@ -493,28 +501,55 @@ async function planJob({ db, ownerId, apiKey, reference, weekStart, kind, deadli
   return { weekStart, kind, requested: batch.length, generated };
 }
 
-// Script d'un format long, rédigé partie par partie, avec les références du créneau
-async function scriptJob({ db, ownerId, apiKey, reference, post, deadline }) {
+// Script d'un format long, rédigé partie par partie.
+// Chaque partie est enregistrée dès qu'elle est produite : une interruption ne fait perdre que la partie en cours.
+// maxParts limite le nombre de parties produites par appel (1 pour l'interface, pour rester sous 60 s).
+async function scriptJob({ db, ownerId, apiKey, reference, post, deadline, maxParts = Infinity }) {
   const parts = LONG_SCRIPT_PARTS[post.format];
-  const weekStart = mondayOf(post.post_date);
-  const theme = await loadTheme(db, ownerId, weekStart);
-  const template = await loadTemplate(db, ownerId);
-  const references = referencesFor(template, dayIndexOf(post.post_date), post.format, 0);
+  const weekStart = startOfWeek(post.post_date);
 
-  const examples = await selectExamples(db, ownerId, {
-    kinds: ['script_long'],
-    formats: new Set([post.format]),
-    days: new Set(),
-  });
+  const { data: row, error: rErr } = await db
+    .from('editorial_posts')
+    .select('script_parts')
+    .eq('id', post.id)
+    .eq('owner_id', ownerId)
+    .maybeSingle();
+  if (rErr) throw new Error(rErr.message);
 
-  const texts = [];
-  for (let i = 1; i <= parts; i++) {
-    if (deadline && Date.now() > deadline) throw new BudgetExceeded();
-    const previous = texts.length ? texts[texts.length - 1].slice(-1200) : '';
-    texts.push(await generatePart({
-      apiKey, reference, examples, post, theme,
-      part: i, total: parts, previous, references, deadline,
-    }));
+  const texts = Array.isArray(row?.script_parts) ? [...row.script_parts] : [];
+
+  if (texts.length < parts) {
+    const theme = await loadTheme(db, ownerId, weekStart);
+    const template = await loadTemplate(db, ownerId);
+    const references = referencesFor(template, dayIndexOf(post.post_date), post.format, 0);
+    const examples = await selectExamples(db, ownerId, {
+      kinds: ['script_long'],
+      formats: new Set([post.format]),
+      days: new Set(),
+    });
+
+    const limit = Math.min(parts, texts.length + maxParts);
+    for (let i = texts.length + 1; i <= limit; i++) {
+      if (deadline && Date.now() > deadline) throw new BudgetExceeded();
+      const previous = texts.length ? texts[texts.length - 1].slice(-1200) : '';
+      const text = await generatePart({
+        apiKey, reference, examples, post, theme,
+        part: i, total: parts, previous, references, deadline,
+      });
+      texts.push(text);
+
+      const { error: sErr } = await db
+        .from('editorial_posts')
+        .update({ script_parts: texts, updated_at: new Date().toISOString() })
+        .eq('id', post.id)
+        .eq('owner_id', ownerId)
+        .neq('status', 'publie');
+      if (sErr) throw new Error(sErr.message);
+    }
+  }
+
+  if (texts.length < parts) {
+    return { weekStart, kind: 'script', requested: 1, generated: 1, partial: true };
   }
 
   const script = clean(texts.join('\n\n'), SCRIPT_MAX);
@@ -522,7 +557,7 @@ async function scriptJob({ db, ownerId, apiKey, reference, post, deadline }) {
 
   const { error } = await db
     .from('editorial_posts')
-    .update({ script, updated_at: new Date().toISOString() })
+    .update({ script, script_parts: [], updated_at: new Date().toISOString() })
     .eq('id', post.id)
     .eq('owner_id', ownerId)
     .neq('status', 'publie');
@@ -538,14 +573,14 @@ async function dueJobs(db, ownerId, today) {
     .eq('owner_id', ownerId)
     .eq('is_adhoc', false)
     .neq('status', 'publie')
-    .gte('post_date', mondayOf(today))
+    .gte('post_date', startOfWeek(today))
     .order('post_date', { ascending: true })
     .limit(500);
   if (error) throw new Error(error.message);
 
   const jobs = new Map();
   for (const p of data || []) {
-    const weekStart = mondayOf(p.post_date);
+    const weekStart = startOfWeek(p.post_date);
     const dueOn = addDays(weekStart, -leadFor(p.format));
     if (dueOn > today) continue;
 
@@ -566,7 +601,7 @@ async function dueJobs(db, ownerId, today) {
   );
 }
 
-// Prochaine tâche d'une semaine donnée, sans attendre la date d'échéance
+// Prochaine tâche d'une semaine donnée (dimanche d'ouverture), sans attendre la date d'échéance
 async function nextWeekJob(db, ownerId, weekStart) {
   const { data, error } = await db
     .from('editorial_posts')
@@ -598,11 +633,18 @@ export async function runWeekStep({ db, ownerId, apiKey, reference, weekStart })
   const deadline = Date.now() + STEP_BUDGET_MS;
   try {
     const r = next.kind === 'script'
-      ? await scriptJob({ db, ownerId, apiKey, reference, post: next.post, deadline })
+      ? await scriptJob({ db, ownerId, apiKey, reference, post: next.post, deadline, maxParts: 1 })
       : await planJob({ db, ownerId, apiKey, reference, weekStart, kind: next.kind, deadline });
-    return { weekStart, done: false, kind: next.kind, requested: r.requested, generated: r.generated };
+    return {
+      weekStart,
+      done: false,
+      kind: next.kind,
+      requested: r.requested,
+      generated: r.generated,
+      partial: Boolean(r.partial),
+    };
   } catch (err) {
-    // Un script long qui dépasse le budget est repris à l'étape suivante
+    // Budget épuisé : les parties déjà enregistrées sont conservées, la reprise se fait à l'étape suivante
     if (err instanceof BudgetExceeded) {
       return { weekStart, done: false, kind: next.kind, requested: 1, generated: 0, partial: true };
     }
