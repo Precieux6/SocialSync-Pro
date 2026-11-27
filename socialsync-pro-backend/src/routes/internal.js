@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { getSupabaseAdmin } from '../utils/supabaseAdmin.js';
 import { decryptSecret } from '../utils/crypto.js';
 import { publishInstagram } from '../services/publishers/instagram.js';
-import { runContentAutomation, parisToday } from '../services/contentPlanner.js';
+import { runContentAutomation, runWeekStep, parisToday } from '../services/contentPlanner.js';
 import { sendVideoReminders } from '../services/reminders.js';
 
 const router = express.Router();
@@ -13,6 +13,8 @@ const BATCH_SIZE = 5;
 const MAX_ATTEMPTS = 3;
 const CONTENT_BUDGET_MS = 50_000;
 const SCRIPTS_BUDGET_MS = 50_000;   // route dédiée aux scripts longs (maxDuration à prévoir)
+const WEEK_BUDGET_MS = 45_000;      // job horaire week-jobs : sous la limite de 60 s du plan Hobby
+const WEEK_MIN_STEP_MS = 15_000;    // temps restant minimum pour lancer une étape
 const STUCK_AFTER_MS = 15 * 60_000;
 
 const PUBLISHERS = {
@@ -29,7 +31,7 @@ function secretMatches(received) {
 }
 
 // Vercel Cron envoie « Authorization: Bearer <CRON_SECRET> ».
-// Les appels manuels peuvent utiliser l'en-tête X-Cron-Secret.
+// Les appels manuels et cron-job.org peuvent utiliser l'en-tête X-Cron-Secret.
 function isAuthorized(req) {
   const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   return secretMatches(req.headers['x-cron-secret']) || secretMatches(bearer);
@@ -290,6 +292,88 @@ async function scriptsJob(req, res) {
   }
 }
 
+// GET|POST /api/internal/week-jobs : poursuit la rédaction des semaines mises en file par la saisie d'un thème.
+// Appelé toutes les heures par cron-job.org. Chaque exécution reste sous 45 s.
+async function weekJobs(req, res) {
+  if (!isAuthorized(req)) return res.status(401).json({ success: false, error: 'Non autorisé.' });
+
+  try {
+    const admin = getSupabaseAdmin();
+    const t0 = Date.now();
+    const left = () => WEEK_BUDGET_MS - (Date.now() - t0);
+
+    const { data: rows, error } = await admin
+      .from('weeks_themes')
+      .select('owner_id, week_start, gen_requested_at, gen_done_at')
+      .not('gen_requested_at', 'is', null)
+      .order('gen_requested_at', { ascending: true })
+      .limit(100);
+    if (error) throw new Error(error.message);
+
+    const pending = (rows || []).filter(
+      (r) => !r.gen_done_at || new Date(r.gen_done_at) < new Date(r.gen_requested_at)
+    );
+    const summary = { pending: pending.length, steps: 0, weeksDone: 0, errors: 0 };
+    const configs = new Map();
+
+    for (const job of pending) {
+      if (left() < WEEK_MIN_STEP_MS) break;
+
+      try {
+        if (!configs.has(job.owner_id)) {
+          const { data: s, error: sErr } = await admin
+            .from('owner_settings')
+            .select('claude_key_encrypted, reference_calendar')
+            .eq('owner_id', job.owner_id)
+            .maybeSingle();
+          if (sErr) throw new Error(sErr.message);
+          configs.set(job.owner_id, {
+            apiKey: decryptSecret(s?.claude_key_encrypted),
+            reference: s?.reference_calendar?.content
+              ? String(s.reference_calendar.content).slice(0, 100000)
+              : null,
+          });
+        }
+        const cfg = configs.get(job.owner_id);
+        if (!cfg.apiKey) throw new Error('clé Claude absente ou illisible');
+        if (!cfg.reference) throw new Error('calendrier de référence absent');
+
+        let done = false;
+        while (!done && left() >= WEEK_MIN_STEP_MS) {
+          const r = await runWeekStep({
+            db: admin,
+            ownerId: job.owner_id,
+            apiKey: cfg.apiKey,
+            reference: cfg.reference,
+            weekStart: job.week_start,
+            budgetMs: left() - 5_000,
+          });
+          summary.steps += 1;
+          if (r.done) done = true;
+        }
+
+        if (done) {
+          const { error: dErr } = await admin
+            .from('weeks_themes')
+            .update({ gen_done_at: new Date().toISOString() })
+            .eq('owner_id', job.owner_id)
+            .eq('week_start', job.week_start);
+          if (dErr) throw new Error(dErr.message);
+          summary.weeksDone += 1;
+        }
+      } catch (err) {
+        summary.errors += 1;
+        console.error('week-jobs : semaine', job.week_start, ':', err.message);
+      }
+    }
+
+    res.json({ success: true, ...summary });
+  } catch (err) {
+    console.error('week-jobs :', err);
+    res.status(500).json({ success: false, error: 'Erreur interne du job.' });
+  }
+}
+
 // GET|POST /api/internal/reminders : rappels de tournage, un espace à la fois
 async function remindersJob(req, res) {
   if (!isAuthorized(req)) return res.status(401).json({ success: false, error: 'Non autorisé.' });
@@ -331,6 +415,8 @@ router.get('/content-job', contentJob);
 router.post('/content-job', contentJob);
 router.get('/scripts-job', scriptsJob);
 router.post('/scripts-job', scriptsJob);
+router.get('/week-jobs', weekJobs);
+router.post('/week-jobs', weekJobs);
 router.get('/reminders', remindersJob);
 router.post('/reminders', remindersJob);
 
