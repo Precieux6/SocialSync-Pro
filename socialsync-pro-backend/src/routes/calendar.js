@@ -2,12 +2,12 @@
 import express from 'express';
 import { requireOwner } from '../middleware/auth.js';
 import {
-  addDays,
   dayIndexOf,
   ensureRange,
-  isMonday,
-  isValidIsoDate,
+  isWeekEnd,
+  isWeekStart,
   isoWeekNumber,
+  isValidIsoDate,
 } from '../services/calendarBlocks.js';
 import { FORMATS } from '../config/formats.js';
 
@@ -27,13 +27,13 @@ const CONTENT_KEYS = [
   'tags', 'script', 'slides', 'media_urls', 'video_url',
 ];
 
-// Plage demandée par l'interface : du lundi au dimanche, de 7 à 42 jours
+// Plage demandée par l'interface : du dimanche au samedi, de 7 à 42 jours
 function parseRange(req) {
   const from = String(req.query.from || '');
   const to = String(req.query.to || '');
   if (!isValidIsoDate(from) || !isValidIsoDate(to)) return { error: 'Dates invalides (YYYY-MM-DD).' };
-  if (!isMonday(from)) return { error: 'La période doit commencer un lundi.' };
-  if (dayIndexOf(to) !== 6) return { error: 'La période doit se terminer un dimanche.' };
+  if (!isWeekStart(from)) return { error: 'La période doit commencer un dimanche.' };
+  if (!isWeekEnd(to)) return { error: 'La période doit se terminer un samedi.' };
 
   const span = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 864e5) + 1;
   if (span < MIN_RANGE_DAYS || span > MAX_RANGE_DAYS) {
@@ -96,7 +96,7 @@ async function spaceTimezone(req) {
   }
 }
 
-// Thèmes indexés par lundi de semaine, limités à la plage affichée
+// Thèmes indexés par dimanche d'ouverture de semaine, limités à la plage affichée
 async function loadThemes(req, from, to) {
   const { data, error } = await req.db
     .from('weeks_themes')
@@ -140,14 +140,14 @@ router.get('/themes', async (req, res) => {
   }
 });
 
-// Saisie d'un thème pour la semaine qui commence au lundi weekStart (YYYY-MM-DD).
+// Saisie d'un thème pour la semaine qui commence au dimanche weekStart (YYYY-MM-DD).
 // La rédaction de la semaine est ensuite lancée par l'interface via /ai/generate-week.
 router.put('/themes/:weekStart', requireOwner, async (req, res) => {
   const weekStart = String(req.params.weekStart || '');
   const title = String(req.body?.title || '').trim().slice(0, 200);
 
-  if (!isMonday(weekStart)) {
-    return res.status(400).json({ success: false, error: 'Date de semaine invalide (un lundi au format YYYY-MM-DD).' });
+  if (!isWeekStart(weekStart)) {
+    return res.status(400).json({ success: false, error: 'Date de semaine invalide (un dimanche au format YYYY-MM-DD).' });
   }
   if (!title) return res.status(400).json({ success: false, error: 'Titre vide.' });
 
@@ -177,7 +177,7 @@ router.put('/themes/:weekStart', requireOwner, async (req, res) => {
   }
 });
 
-// Publications d'une plage (du lundi au dimanche). Les publications manquantes sont créées avant lecture.
+// Publications d'une plage (du dimanche au samedi). Les publications manquantes sont créées avant lecture.
 router.get('/posts', async (req, res) => {
   const range = parseRange(req);
   if (range.error) return res.status(400).json({ success: false, error: range.error });
