@@ -148,10 +148,10 @@ export const api = {
 
   calendar: {
     themes: () => request('/calendar/themes'),
-    updateTheme: (week, title) =>
-      request(`/calendar/themes/${week}`, { method: 'PUT', body: { title } }),
-    posts: (start, startWeek) =>
-      request(`/calendar/posts?start=${start}&startWeek=${startWeek}`),
+    updateTheme: (weekStart, title) =>
+      request(`/calendar/themes/${weekStart}`, { method: 'PUT', body: { title } }),
+    // Plage du lundi au dimanche (YYYY-MM-DD)
+    posts: (from, to) => request(`/calendar/posts?from=${from}&to=${to}`),
     createPost: (data) => request('/calendar/posts', { method: 'POST', body: data }),
     updatePost: (id, data) => request(`/calendar/posts/${id}`, { method: 'PUT', body: data }),
     validate: (id) => request(`/calendar/posts/${id}/validate`, { method: 'POST' }),
@@ -190,6 +190,9 @@ export const api = {
     prompt: (theme, platform) =>
       request('/ai/generate-prompt', { method: 'POST', body: { theme, platform } }),
     generateNow: () => request('/ai/generate-now', { method: 'POST' }),
+    // Une étape de rédaction pour la semaine commençant le lundi weekStart
+    generateWeek: (weekStart) =>
+      request('/ai/generate-week', { method: 'POST', body: { weekStart } }),
   },
 
   examples: {
