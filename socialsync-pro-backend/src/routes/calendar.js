@@ -2,6 +2,7 @@
 import express from 'express';
 import { requireOwner, requireRole } from '../middleware/auth.js';
 import {
+  addDays,
   dayIndexOf,
   ensureRange,
   isWeekEnd,
@@ -122,6 +123,34 @@ async function loadPost(req, id) {
   return data;
 }
 
+// Efface les contenus générés et non validés d'une semaine, pour les réécrire avec le nouveau thème.
+// Ne touche ni aux publications validées, ni aux publications programmées ou publiées, ni aux publications hors plan.
+async function resetUnvalidatedWeek(req, weekStart) {
+  const { error } = await req.db
+    .from('editorial_posts')
+    .update({
+      caption: '',
+      first_comment: '',
+      tags: [],
+      image_prompt: '',
+      thumbnail_prompt: '',
+      slides: [],
+      script: '',
+      script_parts: [],
+      ai_generated_at: null,
+      reviewed_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('owner_id', req.ownerId)
+    .eq('is_adhoc', false)
+    .eq('status', 'brouillon')
+    .gte('post_date', weekStart)
+    .lte('post_date', addDays(weekStart, 6))
+    .not('ai_generated_at', 'is', null)
+    .is('reviewed_at', null);
+  if (error) throw new Error(error.message);
+}
+
 // Une valeur vide et une valeur absente sont équivalentes : évite une relecture inutile
 const emptyish = (v) => v === null || v === undefined || v === '' || (Array.isArray(v) && v.length === 0);
 const sameContent = (a, b) =>
@@ -143,8 +172,8 @@ router.get('/themes', async (req, res) => {
   }
 });
 
-// Saisie d'un thème pour la semaine qui commence au dimanche weekStart (YYYY-MM-DD).
-// Propriétaire, Éditeur et Community Manager. La rédaction est ensuite lancée par l'interface via /ai/generate-week.
+// Saisie d'un thème. Si le titre change, les contenus non validés de la semaine sont effacés et réécrits.
+// La rédaction est mise en file côté serveur : elle se poursuit même si l'onglet est fermé (job week-jobs).
 router.put('/themes/:weekStart', THEME_EDITORS, async (req, res) => {
   const weekStart = String(req.params.weekStart || '');
   const title = String(req.body?.title || '').trim().slice(0, 200);
@@ -155,7 +184,18 @@ router.put('/themes/:weekStart', THEME_EDITORS, async (req, res) => {
   if (!title) return res.status(400).json({ success: false, error: 'Titre vide.' });
 
   try {
-    // Un thème saisi à la main remplace toute proposition de Claude et n'est plus marqué comme généré
+    const { data: prev, error: pErr } = await req.db
+      .from('weeks_themes')
+      .select('title')
+      .eq('owner_id', req.ownerId)
+      .eq('week_start', weekStart)
+      .maybeSingle();
+    if (pErr) return res.status(500).json({ success: false, error: pErr.message });
+
+    const titleChanged = String(prev?.title ?? '').trim() !== title;
+    if (titleChanged) await resetUnvalidatedWeek(req, weekStart);
+
+    const now = new Date().toISOString();
     const { data, error } = await req.db
       .from('weeks_themes')
       .upsert([{
@@ -165,6 +205,8 @@ router.put('/themes/:weekStart', THEME_EDITORS, async (req, res) => {
         week: isoWeekNumber(weekStart),
         title,
         ai_generated: false,
+        gen_requested_at: now,
+        gen_done_at: null,
       }], { onConflict: 'owner_id,week_start' })
       .select()
       .single();
@@ -173,7 +215,7 @@ router.put('/themes/:weekStart', THEME_EDITORS, async (req, res) => {
     res.json({
       success: true,
       updatedWeek: data,
-      generation: { pending: true, weekStart },
+      generation: { pending: true, queued: true, reset: titleChanged, weekStart },
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
