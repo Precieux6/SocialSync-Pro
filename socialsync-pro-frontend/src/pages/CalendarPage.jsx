@@ -1,5 +1,5 @@
 // socialsync-pro-frontend/src/pages/CalendarPage.jsx
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import PostEditor from '../components/calendar/PostEditor';
@@ -10,7 +10,6 @@ import { FORMATS } from '../constants/formats';
 
 const READ_ONLY_ROLE = 'Relecteur / Client';
 const NO_THEME = 'Thème à définir';
-const MAX_STEPS = 40;
 
 const STATUS_STYLE = {
   brouillon: 'bg-stone-100 text-stone-700 border-stone-200',
@@ -84,10 +83,15 @@ function AddPostModal({ date, onClose, onCreated, notify }) {
 }
 
 export default function CalendarPage({ notify }) {
-  const { isOwner, userRole } = useAuth();
+  const { userRole } = useAuth();
   const [mode, setMode] = useState('month'); // 'month' | 'week'
   const [anchor, setAnchor] = useState(() => todayIso());
+  const [scrollToToday, setScrollToToday] = useState(false);
   const today = todayIso();
+  const todayRef = useRef(null);
+
+  // Propriétaire, Éditeur et Community Manager peuvent modifier les thèmes et rédiger
+  const canEdit = Boolean(userRole) && userRole !== READ_ONLY_ROLE;
 
   const view = useMemo(() => {
     if (mode === 'week') return buildWeek(anchor);
@@ -106,8 +110,6 @@ export default function CalendarPage({ notify }) {
   const [draftTitle, setDraftTitle] = useState('');
   const [busyWeek, setBusyWeek] = useState(null);
   const [adding, setAdding] = useState(null);
-
-  const canGenerate = Boolean(userRole) && userRole !== READ_ONLY_ROLE;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -130,6 +132,14 @@ export default function CalendarPage({ notify }) {
     load();
   }, [load]);
 
+  // Après « Aujourd'hui », fait défiler la page jusqu'à la case du jour
+  useEffect(() => {
+    if (scrollToToday && todayRef.current) {
+      todayRef.current.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+      setScrollToToday(false);
+    }
+  }, [scrollToToday, weeks]);
+
   const postsByDate = useMemo(() => {
     const map = {};
     for (const p of posts) (map[p.post_date] ||= []).push(p);
@@ -141,18 +151,22 @@ export default function CalendarPage({ notify }) {
 
   const goPrev = () => setAnchor((a) => (mode === 'week' ? addDays(a, -7) : shiftMonthAnchor(a, -1)));
   const goNext = () => setAnchor((a) => (mode === 'week' ? addDays(a, 7) : shiftMonthAnchor(a, 1)));
-  const goToday = () => setAnchor(todayIso());
+  const goToday = () => {
+    setAnchor(todayIso());
+    setScrollToToday(true);
+  };
 
   const titleLabel = mode === 'week'
     ? `Du ${dayMonth(from)} au ${dayMonth(to)} ${to.slice(0, 4)}`
     : `${MONTH_NAMES[Number(anchor.slice(5, 7)) - 1]} ${anchor.slice(0, 4)}`;
 
   // Rédige une semaine étape par étape. Chaque appel rédige une publication ou une partie de script.
+  // Si aucun thème n'existe, Claude en propose un à la première étape.
   const generateWeek = async (weekStart) => {
     setBusyWeek(weekStart);
     let produced = 0;
     try {
-      for (let step = 0; step < MAX_STEPS; step++) {
+      for (let step = 0; step < 40; step++) {
         const r = await api.ai.generateWeek(weekStart);
         if (r.done) break;
         if (!r.generated) {
@@ -209,6 +223,7 @@ export default function CalendarPage({ notify }) {
           <p className="text-xs text-stone-500 mt-1">
             Cliquez sur une publication pour la rédiger. Le « + » ajoute une publication hors plan.
           </p>
+          <p className="text-xs font-bold text-gold-700 mt-2">Aujourd'hui : {shortDate(today)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-xl bg-[#F4EFE6] border border-[#E2D5C3] p-1">
@@ -261,6 +276,7 @@ export default function CalendarPage({ notify }) {
                         value={draftTitle}
                         onChange={(e) => setDraftTitle(e.target.value)}
                         maxLength={200}
+                        placeholder="Thème de la semaine"
                         className="flex-1 bg-[#F4EFE6] border border-[#D6AC66] rounded-xl p-2.5 text-sm font-semibold text-stone-900 focus:outline-none"
                       />
                       <button onClick={() => saveTheme(week.weekStart)} className="px-4 py-2 rounded-xl bg-stone-900 text-amber-200 text-xs font-bold">
@@ -283,19 +299,19 @@ export default function CalendarPage({ notify }) {
 
                   <div className="flex items-center gap-2">
                     {busy && <span className="text-[11px] font-bold text-gold-700">Rédaction en cours...</span>}
-                    {isOwner && editingWeek !== week.weekStart && (
+                    {canEdit && editingWeek !== week.weekStart && (
                       <button
                         onClick={() => { setEditingWeek(week.weekStart); setDraftTitle(title || ''); }}
                         className="bg-[#FAF7F2] hover:bg-gold-500 hover:text-white text-stone-800 text-xs font-bold px-3 py-1.5 rounded-full border border-gold-600 transition-all"
                       >
-                        Modifier le thème
+                        {title ? 'Modifier le thème' : 'Saisir le thème'}
                       </button>
                     )}
-                    {canGenerate && (
+                    {canEdit && (
                       <button
                         onClick={() => generateWeek(week.weekStart)}
                         disabled={busyWeek !== null}
-                        title="Relance la rédaction des publications vides de cette semaine"
+                        title="Rédige les publications vides de cette semaine (et propose un thème si besoin)"
                         className="bg-stone-900 text-amber-200 hover:bg-stone-800 text-xs font-bold px-3 py-1.5 rounded-full disabled:opacity-50"
                       >
                         {busy ? 'En cours...' : 'Rédiger 🤖'}
@@ -305,55 +321,61 @@ export default function CalendarPage({ notify }) {
                 </div>
 
                 <div className="grid grid-cols-7 gap-2">
-                  {week.days.map((day) => (
-                    <div
-                      key={day.date}
-                      className={`rounded-xl border border-[#E2D5C3] p-1.5 min-h-[120px] space-y-1 ${
-                        day.inMonth ? 'bg-white' : 'bg-[#F4EFE6]/50 opacity-60'
-                      } ${day.date === today ? 'ring-2 ring-gold-500' : ''}`}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="leading-tight">
-                          <span className="block text-[9px] font-bold uppercase tracking-wider text-stone-500">{day.label}</span>
-                          <span className="text-xs font-bold text-stone-800">{day.day}</span>
-                        </div>
-                        <button
-                          onClick={() => setAdding({ date: day.date })}
-                          title="Ajouter une publication hors plan"
-                          className="w-5 h-5 rounded-full bg-[#FAF7F2] border border-[#D6AC66] text-stone-800 font-bold text-xs flex items-center justify-center hover:bg-stone-900 hover:text-amber-200"
-                        >
-                          +
-                        </button>
-                      </div>
-
-                      {(postsByDate[day.date] || []).map((post) => {
-                        const badge = badgeOf(post);
-                        return (
+                  {week.days.map((day) => {
+                    const isToday = day.date === today;
+                    return (
+                      <div
+                        key={day.date}
+                        ref={isToday ? todayRef : null}
+                        className={`rounded-xl border border-[#E2D5C3] p-1.5 min-h-[120px] space-y-1 ${
+                          day.inMonth ? 'bg-white' : 'bg-[#F4EFE6]/50 opacity-60'
+                        } ${isToday ? 'ring-2 ring-gold-500' : ''}`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="leading-tight">
+                            <span className="block text-[9px] font-bold uppercase tracking-wider text-stone-500">
+                              {day.label}{isToday ? ' · auj.' : ''}
+                            </span>
+                            <span className="text-xs font-bold text-stone-800">{day.day}</span>
+                          </div>
                           <button
-                            key={post.id}
-                            onClick={() => setSelectedId(post.id)}
-                            className={`w-full text-left rounded-lg border p-1.5 transition-all ${
-                              selectedId === post.id ? 'border-gold-500 bg-white shadow' : 'border-[#E2D5C3] bg-[#FAF7F2] hover:border-gold-500'
-                            }`}
+                            onClick={() => setAdding({ date: day.date })}
+                            title="Ajouter une publication hors plan"
+                            className="w-5 h-5 rounded-full bg-[#FAF7F2] border border-[#D6AC66] text-stone-800 font-bold text-xs flex items-center justify-center hover:bg-stone-900 hover:text-amber-200"
                           >
-                            <span className="text-[10px] font-bold text-stone-800 block leading-tight">
-                              {post.format}{post.is_adhoc ? ' · hors plan' : ''}
-                            </span>
-                            <span className={`inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${badge.style}`}>
-                              {badge.label}
-                            </span>
-                            {post.scheduled_at && post.status === 'programme' && (
-                              <span className="block text-[9px] text-stone-500 mt-0.5">
-                                {new Date(post.scheduled_at).toLocaleString('fr-FR', {
-                                  dateStyle: 'short', timeStyle: 'short', timeZone: timezone,
-                                })}
-                              </span>
-                            )}
+                            +
                           </button>
-                        );
-                      })}
-                    </div>
-                  ))}
+                        </div>
+
+                        {(postsByDate[day.date] || []).map((post) => {
+                          const badge = badgeOf(post);
+                          return (
+                            <button
+                              key={post.id}
+                              onClick={() => setSelectedId(post.id)}
+                              className={`w-full text-left rounded-lg border p-1.5 transition-all ${
+                                selectedId === post.id ? 'border-gold-500 bg-white shadow' : 'border-[#E2D5C3] bg-[#FAF7F2] hover:border-gold-500'
+                              }`}
+                            >
+                              <span className="text-[10px] font-bold text-stone-800 block leading-tight">
+                                {post.format}{post.is_adhoc ? ' · hors plan' : ''}
+                              </span>
+                              <span className={`inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${badge.style}`}>
+                                {badge.label}
+                              </span>
+                              {post.scheduled_at && post.status === 'programme' && (
+                                <span className="block text-[9px] text-stone-500 mt-0.5">
+                                  {new Date(post.scheduled_at).toLocaleString('fr-FR', {
+                                    dateStyle: 'short', timeStyle: 'short', timeZone: timezone,
+                                  })}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
