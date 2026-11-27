@@ -1,6 +1,6 @@
 // socialsync-pro-backend/src/services/contentPlanner.js
 import Anthropic from '@anthropic-ai/sdk';
-import { addDays, blockFor, ensureBlock, mondayOf } from './calendarBlocks.js';
+import { addDays, ensureRange, isoWeekNumber, mondayOf, monthRange } from './calendarBlocks.js';
 import { loadTemplate, referencesFor } from './weeklyTemplate.js';
 import { HEAVY_FORMATS, LIGHT_FORMATS, LONG_SCRIPT_PARTS, PART_WORDS } from '../config/formats.js';
 
@@ -8,6 +8,7 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const MAX_ATTEMPTS = 2;
 const MAX_LIGHT_PER_CALL = 10;
 const TIME_BUDGET_MS = 200_000;
+const STEP_BUDGET_MS = 240_000;    // une étape de rédaction à la demande (route generate-week)
 const SCRIPT_START_MS = 150_000;   // il faut au moins ce temps restant pour lancer un script long
 const LIGHT_START_MS = 30_000;     // il faut au moins ce temps restant pour lancer un lot
 const MIN_REQUEST_MS = 15_000;
@@ -189,39 +190,50 @@ function formatExamples(examples) {
 
 // ---------- Thèmes ----------
 
-// Les thèmes sont enregistrés par numéro de semaine (1 à 13) : même clé que l'interface
-async function loadTheme(db, ownerId, weekNum) {
-  if (weekNum == null) return null;
+// Thèmes indexés par lundi de semaine (week_start), comme dans le calendrier
+async function loadTheme(db, ownerId, weekStart) {
+  if (!weekStart) return null;
   const { data, error } = await db
     .from('weeks_themes')
     .select('title')
     .eq('owner_id', ownerId)
-    .eq('week', weekNum)
+    .eq('week_start', weekStart)
     .maybeSingle();
   if (error) throw new Error(`Lecture du thème impossible : ${error.message}`);
   return data?.title?.trim() || null;
 }
 
-// N'écrit que si aucun titre n'existe : une saisie faite pendant la génération est conservée
-async function saveProposedTheme(db, ownerId, weekNum, title) {
-  const { data: updated, error: uErr } = await db
+// Ne remplace jamais une saisie existante
+async function saveProposedTheme(db, ownerId, weekStart, title) {
+  const { data: row, error: rErr } = await db
     .from('weeks_themes')
-    .update({ title, ai_generated: true })
+    .select('title')
     .eq('owner_id', ownerId)
-    .eq('week', weekNum)
-    .is('title', null)
-    .select('week');
-  if (uErr) throw new Error(uErr.message);
-  if (updated?.length) return;
+    .eq('week_start', weekStart)
+    .maybeSingle();
+  if (rErr) throw new Error(rErr.message);
+  if (row?.title?.trim()) return;
 
-  const { error: iErr } = await db.from('weeks_themes').insert([{
+  if (row) {
+    const { error } = await db
+      .from('weeks_themes')
+      .update({ title, ai_generated: true })
+      .eq('owner_id', ownerId)
+      .eq('week_start', weekStart)
+      .is('title', null);
+    if (error) throw new Error(error.message);
+    return;
+  }
+
+  const { error } = await db.from('weeks_themes').insert([{
     owner_id: ownerId,
     user_id: ownerId,
-    week: weekNum,
+    week_start: weekStart,
+    week: isoWeekNumber(weekStart),
     title,
     ai_generated: true,
   }]);
-  if (iErr) throw new Error(iErr.message);
+  if (error) throw new Error(error.message);
 }
 
 // ---------- Exemples ----------
@@ -357,7 +369,7 @@ async function planJob({ db, ownerId, apiKey, reference, weekStart, kind, deadli
 
   const { data: rows, error } = await db
     .from('editorial_posts')
-    .select('id, post_date, format, platform, brief, week_num, caption, ai_generated_at, status')
+    .select('id, post_date, format, platform, brief, caption, ai_generated_at, status')
     .eq('owner_id', ownerId)
     .eq('is_adhoc', false)
     .in('format', formats)
@@ -374,8 +386,7 @@ async function planJob({ db, ownerId, apiKey, reference, weekStart, kind, deadli
   );
   if (!todo.length) return { weekStart, kind, requested: 0, generated: 0 };
 
-  const weekNum = todo[0].week_num;
-  const theme = await loadTheme(db, ownerId, weekNum);
+  const theme = await loadTheme(db, ownerId, weekStart);
   const batch = todo.slice(0, kind === 'heavy' ? 1 : MAX_LIGHT_PER_CALL);
   const template = await loadTemplate(db, ownerId);
 
@@ -415,11 +426,11 @@ async function planJob({ db, ownerId, apiKey, reference, weekStart, kind, deadli
   });
 
   // Thème absent : Claude en propose un. L'échec d'enregistrement ne bloque pas les légendes.
-  if (!theme && weekNum != null) {
+  if (!theme) {
     const title = clean(plan.theme_title, TITLE_MAX);
     if (title) {
       try {
-        await saveProposedTheme(db, ownerId, weekNum, title);
+        await saveProposedTheme(db, ownerId, weekStart, title);
       } catch (err) {
         console.warn('Thème proposé non enregistré :', err.message);
       }
@@ -486,7 +497,7 @@ async function planJob({ db, ownerId, apiKey, reference, weekStart, kind, deadli
 async function scriptJob({ db, ownerId, apiKey, reference, post, deadline }) {
   const parts = LONG_SCRIPT_PARTS[post.format];
   const weekStart = mondayOf(post.post_date);
-  const theme = await loadTheme(db, ownerId, post.week_num);
+  const theme = await loadTheme(db, ownerId, weekStart);
   const template = await loadTemplate(db, ownerId);
   const references = referencesFor(template, dayIndexOf(post.post_date), post.format, 0);
 
@@ -523,7 +534,7 @@ async function scriptJob({ db, ownerId, apiKey, reference, post, deadline }) {
 async function dueJobs(db, ownerId, today) {
   const { data, error } = await db
     .from('editorial_posts')
-    .select('id, post_date, format, brief, caption, script, ai_generated_at, week_num')
+    .select('id, post_date, format, brief, caption, script, ai_generated_at')
     .eq('owner_id', ownerId)
     .eq('is_adhoc', false)
     .neq('status', 'publie')
@@ -555,6 +566,50 @@ async function dueJobs(db, ownerId, today) {
   );
 }
 
+// Prochaine tâche d'une semaine donnée, sans attendre la date d'échéance
+async function nextWeekJob(db, ownerId, weekStart) {
+  const { data, error } = await db
+    .from('editorial_posts')
+    .select('id, post_date, format, caption, script, ai_generated_at, status')
+    .eq('owner_id', ownerId)
+    .eq('is_adhoc', false)
+    .neq('status', 'publie')
+    .gte('post_date', weekStart)
+    .lte('post_date', addDays(weekStart, 6))
+    .order('post_date', { ascending: true });
+  if (error) throw new Error(error.message);
+
+  const rows = data || [];
+  const todo = rows.filter((p) => !p.ai_generated_at && !p.caption?.trim());
+  if (todo.some((p) => HEAVY_FORMATS.includes(p.format))) return { kind: 'heavy' };
+  if (todo.length) return { kind: 'light' };
+
+  const script = rows.find(
+    (p) => SCRIPT_FORMATS.includes(p.format) && p.ai_generated_at && !String(p.script || '').trim()
+  );
+  return script ? { kind: 'script', post: script } : null;
+}
+
+// Une étape de rédaction pour une semaine. L'interface l'appelle en boucle, une étape par requête.
+export async function runWeekStep({ db, ownerId, apiKey, reference, weekStart }) {
+  const next = await nextWeekJob(db, ownerId, weekStart);
+  if (!next) return { weekStart, done: true, requested: 0, generated: 0 };
+
+  const deadline = Date.now() + STEP_BUDGET_MS;
+  try {
+    const r = next.kind === 'script'
+      ? await scriptJob({ db, ownerId, apiKey, reference, post: next.post, deadline })
+      : await planJob({ db, ownerId, apiKey, reference, weekStart, kind: next.kind, deadline });
+    return { weekStart, done: false, kind: next.kind, requested: r.requested, generated: r.generated };
+  } catch (err) {
+    // Un script long qui dépasse le budget est repris à l'étape suivante
+    if (err instanceof BudgetExceeded) {
+      return { weekStart, done: false, kind: next.kind, requested: 1, generated: 0, partial: true };
+    }
+    throw err;
+  }
+}
+
 // Cycle d'un espace. Options :
 // - scriptsOnly : ne traite que les scripts longs (route scripts-job)
 // - skipScripts : ne traite pas les scripts longs (route content-job)
@@ -572,17 +627,17 @@ export async function runContentAutomation({
   const deadline = Date.now() + budgetMs;
   const left = () => deadline - Date.now();
 
-  // Blocs du mois en cours et du mois suivant (mois indexés à partir de 0, comme blockFor)
+  // Mois en cours et mois suivant (mois indexés à partir de 0)
   const [y, m] = today.split('-').map(Number);
   const months = [[y, m - 1], m === 12 ? [y + 1, 0] : [y, m]];
   const report = { requested: 0, generated: 0, jobs: [], errors: [] };
 
   for (const [yy, mm] of months) {
     try {
-      const { start, startWeek } = blockFor(yy, mm);
-      await ensureBlock(db, ownerId, start, startWeek);
+      const { from, to } = monthRange(yy, mm);
+      await ensureRange(db, ownerId, from, to);
     } catch (err) {
-      report.errors.push(`bloc ${yy}-${mm + 1} : ${err.message}`);
+      report.errors.push(`mois ${yy}-${mm + 1} : ${err.message}`);
     }
   }
 
