@@ -11,8 +11,8 @@ const router = express.Router();
 
 const BATCH_SIZE = 5;
 const MAX_ATTEMPTS = 3;
-const CONTENT_BUDGET_MS = 200_000;
-const SCRIPTS_BUDGET_MS = 270_000;   // route dédiée aux scripts longs (maxDuration à prévoir)
+const CONTENT_BUDGET_MS = 50_000;
+const SCRIPTS_BUDGET_MS = 50_000;   // route dédiée aux scripts longs (maxDuration à prévoir)
 const STUCK_AFTER_MS = 15 * 60_000;
 
 const PUBLISHERS = {
