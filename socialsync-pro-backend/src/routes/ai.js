@@ -4,7 +4,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import rateLimit from 'express-rate-limit';
 import { decryptSecret } from '../utils/crypto.js';
 import { requireRole } from '../middleware/auth.js';
-import { runContentAutomation } from '../services/contentPlanner.js';
+import { runContentAutomation, runWeekStep } from '../services/contentPlanner.js';
+import { isMonday } from '../services/calendarBlocks.js';
 
 const router = express.Router();
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
@@ -20,10 +21,10 @@ Respectez scrupuleusement ces règles :
 `;
 
 // Limite par utilisateur (et non par adresse IP, partagée par toute l'équipe).
-// Placé après requireAuth : req.user est déjà renseigné.
+// Une semaine complète demande plusieurs étapes : la limite est volontairement plus haute.
 const aiLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  limit: 30,
+  limit: 300,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.user?.id ?? req.ip,
@@ -107,7 +108,7 @@ router.post('/generate-prompt', (req, res) => {
   });
 });
 
-// POST /api/ai/generate-now : lance le cycle de rédaction pour l'espace courant
+// POST /api/ai/generate-now : lance le cycle de rédaction pour l'espace courant (mois en cours et suivant)
 router.post(
   '/generate-now',
   requireRole('Propriétaire', 'Éditeur', 'Community Manager'),
@@ -133,6 +134,41 @@ router.post(
       }
       console.error('generate-now :', err);
       res.status(500).json({ success: false, error: 'Erreur lors de la génération.' });
+    }
+  }
+);
+
+// POST /api/ai/generate-week : une étape de rédaction pour une semaine (appelée en boucle par l'interface)
+router.post(
+  '/generate-week',
+  requireRole('Propriétaire', 'Éditeur', 'Community Manager'),
+  async (req, res) => {
+    const weekStart = String(req.body?.weekStart || '');
+    if (!isMonday(weekStart)) {
+      return res.status(400).json({ success: false, error: 'Semaine invalide (un lundi au format YYYY-MM-DD).' });
+    }
+
+    try {
+      const cfg = await loadSpaceAiConfig(req);
+      if (cfg.error) return res.status(400).json({ success: false, error: cfg.error });
+      if (!cfg.reference) {
+        return res.status(400).json({ success: false, error: 'Importez le calendrier de référence avant de générer.' });
+      }
+
+      const step = await runWeekStep({
+        db: req.db,
+        ownerId: req.ownerId,
+        apiKey: cfg.apiKey,
+        reference: cfg.reference,
+        weekStart,
+      });
+      res.json({ success: true, ...step });
+    } catch (err) {
+      if (err?.status === 401) {
+        return res.status(400).json({ success: false, error: 'La clé Claude de cet espace est refusée par Anthropic.' });
+      }
+      console.error('generate-week :', err);
+      res.status(500).json({ success: false, error: 'Erreur lors de la rédaction de la semaine.' });
     }
   }
 );
