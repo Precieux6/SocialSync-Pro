@@ -13,7 +13,11 @@ const DAY_MS = 864e5;
 const isoOfMs = (ms) => new Date(ms).toISOString().slice(0, 10);
 const msOf = (iso) => Date.parse(`${iso}T00:00:00Z`);
 
-export const todayIso = () => isoOfMs(Date.now());
+// Date du jour à Paris (et non en UTC), pour éviter un décalage autour de minuit
+export const todayIso = () =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
 
 export const addDays = (iso, n) => isoOfMs(msOf(iso) + n * DAY_MS);
 
