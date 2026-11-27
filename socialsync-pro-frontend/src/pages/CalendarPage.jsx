@@ -4,7 +4,7 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import PostEditor from '../components/calendar/PostEditor';
 import {
-  DAY_LABELS, MONTH_NAMES, buildMonthWeeks, dayMonth, mondayOf, shortDate, todayIso,
+  DAY_LABELS, MONTH_NAMES, buildMonthWeeks, dayMonth, shortDate, startOfWeek, todayIso,
 } from '../utils/calendarGrid';
 import { FORMATS } from '../constants/formats';
 
@@ -127,7 +127,7 @@ export default function CalendarPage({ notify }) {
   }, [posts]);
 
   const selected = posts.find((p) => p.id === selectedId) || null;
-  const selectedTheme = selected ? themes[mondayOf(selected.post_date)] || NO_THEME : '';
+  const selectedTheme = selected ? themes[startOfWeek(selected.post_date)] || NO_THEME : '';
 
   const shiftMonth = (delta) =>
     setCursor((c) => {
@@ -135,7 +135,7 @@ export default function CalendarPage({ notify }) {
       return { year: d.getUTCFullYear(), month: d.getUTCMonth() };
     });
 
-  // Rédige une semaine étape par étape. Chaque appel rédige une publication ou un script.
+  // Rédige une semaine étape par étape. Chaque appel rédige une publication ou une partie de script.
   const generateWeek = async (weekStart) => {
     setBusyWeek(weekStart);
     let produced = 0;
@@ -149,7 +149,7 @@ export default function CalendarPage({ notify }) {
         produced += r.generated;
       }
       notify(produced
-        ? `${produced} publication(s) rédigée(s) pour la semaine du ${shortDate(weekStart)}.`
+        ? `${produced} élément(s) rédigé(s) pour la semaine du ${shortDate(weekStart)}.`
         : 'Rien à rédiger : cette semaine est déjà prête.');
     } catch (e) {
       notify(e.message);
