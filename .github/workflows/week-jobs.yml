@@ -1,0 +1,21 @@
+name: week-jobs
+
+on:
+  schedule:
+    - cron: '10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  call-week-jobs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Appel de l'endpoint week-jobs
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -sS -X POST "${API_URL}/api/internal/week-jobs" \
+            -H "X-Cron-Secret: ${CRON_SECRET}" \
+            --max-time 120 \
+            --fail-with-body
