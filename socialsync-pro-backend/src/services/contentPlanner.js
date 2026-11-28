@@ -1,13 +1,6 @@
 // socialsync-pro-backend/src/services/contentPlanner.js
 import Anthropic from '@anthropic-ai/sdk';
-import {
-  addDays,
-  dayIndexOf,
-  ensureRange,
-  isoWeekNumber,
-  monthRange,
-  startOfWeek,
-} from './calendarBlocks.js';
+import { addDays, dayIndexOf, ensureRange, monthRange, startOfWeek, weekNumOf } from './calendarBlocks.js';
 import { loadTemplate, referencesFor } from './weeklyTemplate.js';
 import { HEAVY_FORMATS, LIGHT_FORMATS, LONG_SCRIPT_PARTS, PART_WORDS } from '../config/formats.js';
 
@@ -15,9 +8,9 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const MAX_ATTEMPTS = 2;
 // Plan Vercel Hobby : 60 s maximum par fonction. Budgets réduits en conséquence.
 const MAX_LIGHT_PER_CALL = 4;
-const TIME_BUDGET_MS = 50_000;     // cycle automatique (à passer aussi dans internal.js)
-const STEP_BUDGET_MS = 50_000;     // une étape à la demande (route generate-week)
-const MIN_STEP_START_MS = 20_000;  // en dessous, une étape n'est pas lancée (elle expirerait)
+const TIME_BUDGET_MS = 50_000;     // cycle automatique
+const STEP_BUDGET_MS = 45_000;     // une étape à la demande
+export const MIN_STEP_START_MS = 20_000; // en dessous, une étape n'est pas lancée
 const SCRIPT_START_MS = 20_000;    // temps restant minimum pour lancer une partie de script
 const LIGHT_START_MS = 15_000;     // temps restant minimum pour lancer un lot
 const MIN_REQUEST_MS = 10_000;     // délai minimum d'un appel Claude
@@ -29,9 +22,9 @@ const SLIDES_MAX = 8;
 const TITLE_MAX = 200;
 const TAG_RE = /^[@#]?[\p{L}\p{N}_.\-]{1,50}$/u;
 
-// Échéances relatives au dimanche d'ouverture de la semaine
-const LIGHT_LEAD_DAYS = 1;   // samedi précédent
-const HEAVY_LEAD_DAYS = 5;   // mardi précédent
+// Échéances relatives au lundi d'ouverture de la semaine
+const LIGHT_LEAD_DAYS = 1;   // dimanche précédent
+const HEAVY_LEAD_DAYS = 6;   // mardi précédent
 const PARIS_TZ = 'Europe/Paris';
 
 const EXAMPLE_LIMITS = {
@@ -155,6 +148,9 @@ const leadFor = (format) => (HEAVY_FORMATS.includes(format) ? HEAVY_LEAD_DAYS : 
 const requestOptions = (deadline) =>
   deadline ? { timeout: Math.max(MIN_REQUEST_MS, deadline - Date.now()) } : undefined;
 
+// Client Claude : un seul nouvel essai automatique, pour rester dans le budget
+const client = (apiKey) => new Anthropic({ apiKey, maxRetries: 1 });
+
 // Ajoute le nom de l'étape au message d'erreur, sans perdre le statut HTTP ni le type d'erreur
 function wrapStepError(kind, err) {
   const name = err?.name && err.name !== 'Error' ? `${err.name} : ` : '';
@@ -208,7 +204,7 @@ function formatExamples(examples) {
 
 // ---------- Thèmes ----------
 
-// Thèmes indexés par dimanche d'ouverture de semaine (week_start), comme dans le calendrier
+// Thèmes indexés par lundi d'ouverture (week_start), comme dans le calendrier
 async function loadTheme(db, ownerId, weekStart) {
   if (!weekStart) return null;
   const { data, error } = await db
@@ -237,8 +233,7 @@ async function saveProposedTheme(db, ownerId, weekStart, title) {
       .from('weeks_themes')
       .update({ title, ai_generated: true })
       .eq('owner_id', ownerId)
-      .eq('week_start', weekStart)
-      .is('title', null);
+      .eq('week_start', weekStart);
     if (error) throw new Error(error.message);
     return;
   }
@@ -247,7 +242,7 @@ async function saveProposedTheme(db, ownerId, weekStart, title) {
     owner_id: ownerId,
     user_id: ownerId,
     week_start: weekStart,
-    week: isoWeekNumber(weekStart),
+    week: weekNumOf(weekStart),
     title,
     ai_generated: true,
   }]);
@@ -294,7 +289,7 @@ function checkPlan(plan) {
 }
 
 export async function generateWeek({ apiKey, reference, theme, posts, examples = [], deadline }) {
-  const anthropic = new Anthropic({ apiKey });
+  const anthropic = client(apiKey);
   const system = buildSystem(PLANNER_SYSTEM, reference, examples);
   const userContent = JSON.stringify({ theme, publications: posts });
 
@@ -324,7 +319,7 @@ export async function generateWeek({ apiKey, reference, theme, posts, examples =
 
 // Une partie d'un script long : un appel distinct, texte brut, avec la fin de la partie précédente
 async function generatePart({ apiKey, reference, examples, post, theme, part, total, previous, references, deadline }) {
-  const anthropic = new Anthropic({ apiKey });
+  const anthropic = client(apiKey);
   const system = buildSystem(PART_SYSTEM, reference, examples);
 
   const role = part === 1
@@ -513,7 +508,7 @@ async function planJob({ db, ownerId, apiKey, reference, weekStart, kind, deadli
 
 // Script d'un format long, rédigé partie par partie.
 // Chaque partie est enregistrée dès qu'elle est produite : une interruption ne fait perdre que la partie en cours.
-// maxParts limite le nombre de parties produites par appel (1 pour l'interface, pour rester sous 60 s).
+// maxParts limite le nombre de parties produites par appel (1 pour une étape à la demande).
 async function scriptJob({ db, ownerId, apiKey, reference, post, deadline, maxParts = Infinity }) {
   const parts = LONG_SCRIPT_PARTS[post.format];
   const weekStart = startOfWeek(post.post_date);
@@ -611,11 +606,11 @@ async function dueJobs(db, ownerId, today) {
   );
 }
 
-// Prochaine tâche d'une semaine donnée (dimanche d'ouverture), sans attendre la date d'échéance
+// Prochaine tâche d'une semaine donnée (lundi d'ouverture), sans attendre la date d'échéance
 async function nextWeekJob(db, ownerId, weekStart) {
   const { data, error } = await db
     .from('editorial_posts')
-    .select('id, post_date, format, caption, script, ai_generated_at, status')
+    .select('id, post_date, format, brief, caption, script, ai_generated_at, status')
     .eq('owner_id', ownerId)
     .eq('is_adhoc', false)
     .neq('status', 'publie')
@@ -635,8 +630,8 @@ async function nextWeekJob(db, ownerId, weekStart) {
   return script ? { kind: 'script', post: script } : null;
 }
 
-// Une étape de rédaction pour une semaine. L'interface l'appelle en boucle, ou le job (week-jobs / script Node).
-// Une étape qui ne produit rien lève une erreur explicite : un job « vert » sans écriture est un échec.
+// Une étape de rédaction pour une semaine. Appelée en boucle par week-jobs.
+// Une étape qui ne produit rien lève une erreur explicite : un job « vert » sans écriture serait un faux succès.
 export async function runWeekStep({ db, ownerId, apiKey, reference, weekStart, budgetMs = STEP_BUDGET_MS }) {
   const next = await nextWeekJob(db, ownerId, weekStart);
   if (!next) return { weekStart, done: true, requested: 0, generated: 0 };
@@ -675,10 +670,9 @@ export async function runWeekStep({ db, ownerId, apiKey, reference, weekStart, b
   }
 }
 
-// Cycle d'un espace. Options :
-// - scriptsOnly : ne traite que les scripts longs (route scripts-job)
-// - skipScripts : ne traite pas les scripts longs (route content-job)
-// Sans option, les deux phases s'enchaînent, scripts d'abord.
+// Cycle automatique d'un espace. Options :
+// - scriptsOnly : ne traite que les scripts longs
+// - skipScripts : ne traite pas les scripts longs
 export async function runContentAutomation({
   db,
   ownerId,
@@ -699,8 +693,8 @@ export async function runContentAutomation({
 
   for (const [yy, mm] of months) {
     try {
-      const { from, to } = monthRange(yy, mm);
-      await ensureRange(db, ownerId, from, to);
+      const { from } = monthRange(yy, mm);
+      await ensureRange(db, ownerId, from);
     } catch (err) {
       report.errors.push(`mois ${yy}-${mm + 1} : ${err.message}`);
     }
