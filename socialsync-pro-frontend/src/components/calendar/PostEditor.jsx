@@ -11,6 +11,8 @@ const PLATFORMS = [
 
 const SUGGESTED_TAGS = ['@followers', '@everyone'];
 const MAX_TAGS = 30;
+// Formats filmés : médias vidéo, script et miniature
+const VIDEO_FORMAT_LIST = ['Vidéo courte', 'Vidéo long format', 'Séance YouTube', 'Live'];
 // Instagram n'accepte que le JPEG pour les images publiées via l'API
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg, image/jpg';
 
@@ -61,7 +63,7 @@ export default function PostEditor({
 
   const readOnly = post.status === 'publie';
   const canDelete = post.is_adhoc && !readOnly;
-  const isVideo = ['Vidéo courte', 'Séance YouTube', 'Live'].includes(post.format);
+  const isVideo = VIDEO_FORMAT_LIST.includes(post.format);
   const isCarrousel = post.format === 'Carrousel';
   // Contenu généré par l'IA et pas encore relu : bloque programmation et publication
   const needsReview = Boolean(post.ai_generated_at && !post.reviewed_at);
@@ -132,16 +134,17 @@ export default function PostEditor({
     }
   };
 
-  const downloadScript = (format) => {
+  // Téléchargement du script en texte brut (fichier lisible partout)
+  const downloadScript = () => {
     const content = `TITRE DU POST : ${post.format} (${post.post_date})\nTHÈME : ${themeTitle}\n\nSCRIPT :\n${form.script || 'Aucun script rédigé.'}`;
-    const blob = new Blob([content], { type: format === 'pdf' ? 'application/pdf' : 'application/msword' });
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `script-post-${post.id}.${format}`;
+    a.download = `script-post-${post.id}.txt`;
     a.click();
     URL.revokeObjectURL(url);
-    notify(`Script téléchargé au format ${format.toUpperCase()}`);
+    notify('Script téléchargé (.txt)');
   };
 
   const save = async () => {
@@ -412,14 +415,13 @@ export default function PostEditor({
         <section className="space-y-3 p-4 bg-[#F4EFE6]/70 rounded-2xl border border-[#E2D5C3]">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <label className="text-xs font-bold uppercase tracking-wider text-stone-800">Script de la vidéo (À lire)</label>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => downloadScript('pdf')} className="px-3 py-1.5 bg-red-700 text-white text-xs font-bold rounded-xl shadow hover:bg-red-800">
-                📥 PDF
-              </button>
-              <button type="button" onClick={() => downloadScript('docx')} className="px-3 py-1.5 bg-blue-700 text-white text-xs font-bold rounded-xl shadow hover:bg-blue-800">
-                📥 Word
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={downloadScript}
+              className="px-3 py-1.5 bg-stone-900 text-amber-200 text-xs font-bold rounded-xl shadow hover:bg-stone-800"
+            >
+              📥 Télécharger (.txt)
+            </button>
           </div>
           <textarea
             rows={4}
