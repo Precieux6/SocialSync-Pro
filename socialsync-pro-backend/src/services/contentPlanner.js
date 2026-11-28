@@ -14,16 +14,13 @@ import { HEAVY_FORMATS, LIGHT_FORMATS, LONG_SCRIPT_PARTS, PART_WORDS } from '../
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const MAX_ATTEMPTS = 2;
 // Plan Vercel Hobby : 60 s maximum par fonction. Budgets réduits en conséquence.
-const MAX_LIGHT_PER_CALL = 1;
+const MAX_LIGHT_PER_CALL = 4;
 const TIME_BUDGET_MS = 50_000;     // cycle automatique (à passer aussi dans internal.js)
 const STEP_BUDGET_MS = 50_000;     // une étape à la demande (route generate-week)
 const MIN_STEP_START_MS = 20_000;  // en dessous, une étape n'est pas lancée (elle expirerait)
 const SCRIPT_START_MS = 20_000;    // temps restant minimum pour lancer une partie de script
 const LIGHT_START_MS = 15_000;     // temps restant minimum pour lancer un lot
 const MIN_REQUEST_MS = 10_000;     // délai minimum d'un appel Claude
-const HEAVY_MAX_TOKENS = 6_000;    // une publication lourde : légende + prompt + script court
-const LIGHT_MAX_TOKENS = 3_000;    // un lot léger
-const PART_MAX_TOKENS = 6_000;     // une partie de script long
 const CAPTION_MAX = 2_200;
 const SCRIPT_MAX = 40_000;
 const PROMPT_MAX = 2_000;
@@ -156,7 +153,7 @@ const leadFor = (format) => (HEAVY_FORMATS.includes(format) ? HEAVY_LEAD_DAYS : 
 
 // Délai d'un appel Claude : jamais au-delà du budget restant
 const requestOptions = (deadline) =>
-  deadline ? { timeout: Math.max(MIN_REQUEST_MS, deadline - Date.now() - 2_000) } : undefined;
+  deadline ? { timeout: Math.max(MIN_REQUEST_MS, deadline - Date.now()) } : undefined;
 
 // Ajoute le nom de l'étape au message d'erreur, sans perdre le statut HTTP ni le type d'erreur
 function wrapStepError(kind, err) {
@@ -296,7 +293,7 @@ function checkPlan(plan) {
   return plan;
 }
 
-export async function generateWeek({ apiKey, reference, theme, posts, examples = [], deadline, maxTokens = LIGHT_MAX_TOKENS }) {
+export async function generateWeek({ apiKey, reference, theme, posts, examples = [], deadline }) {
   const anthropic = new Anthropic({ apiKey });
   const system = buildSystem(PLANNER_SYSTEM, reference, examples);
   const userContent = JSON.stringify({ theme, publications: posts });
@@ -305,13 +302,13 @@ export async function generateWeek({ apiKey, reference, theme, posts, examples =
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const response = await anthropic.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: maxTokens,
+      max_tokens: 16_000,
       system,
       messages: [{ role: 'user', content: userContent }],
     }, requestOptions(deadline));
 
     if (response.stop_reason === 'max_tokens') {
-      lastError = new Error(`Réponse tronquée (limite de ${maxTokens} tokens atteinte).`);
+      lastError = new Error('Réponse tronquée (limite de tokens atteinte).');
       continue;
     }
 
@@ -350,7 +347,7 @@ async function generatePart({ apiKey, reference, examples, post, theme, part, to
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const response = await anthropic.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: PART_MAX_TOKENS,
+      max_tokens: 6_000,
       system,
       messages: [{ role: 'user', content: user }],
     }, requestOptions(deadline));
@@ -444,7 +441,6 @@ async function planJob({ db, ownerId, apiKey, reference, weekStart, kind, deadli
     examples,
     posts: payloadPosts,
     deadline,
-    maxTokens: kind === 'heavy' ? HEAVY_MAX_TOKENS : LIGHT_MAX_TOKENS,
   });
 
   // Thème absent : Claude en propose un. L'échec d'enregistrement ne bloque pas les légendes.
@@ -639,7 +635,7 @@ async function nextWeekJob(db, ownerId, weekStart) {
   return script ? { kind: 'script', post: script } : null;
 }
 
-// Une étape de rédaction pour une semaine. L'interface l'appelle en boucle, ou le job horaire (week-jobs).
+// Une étape de rédaction pour une semaine. L'interface l'appelle en boucle, ou le job (week-jobs / script Node).
 // Une étape qui ne produit rien lève une erreur explicite : un job « vert » sans écriture est un échec.
 export async function runWeekStep({ db, ownerId, apiKey, reference, weekStart, budgetMs = STEP_BUDGET_MS }) {
   const next = await nextWeekJob(db, ownerId, weekStart);
