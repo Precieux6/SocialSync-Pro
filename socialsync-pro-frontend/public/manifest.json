@@ -3,14 +3,9 @@
   "name": "SocialSync Pro - Calendrier Éditorial",
   "icons": [
     {
-      "src": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=192&h=192&fit=crop",
+      "src": "/logo-social-sync-pro.png",
       "type": "image/png",
-      "sizes": "192x192"
-    },
-    {
-      "src": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=512&h=512&fit=crop",
-      "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "any"
     }
   ],
   "start_url": "/",
