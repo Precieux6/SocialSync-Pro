@@ -185,15 +185,28 @@ export default function CalendarPage({ notify }) {
     }
   };
 
+  // Enregistre le thème. Si la semaine n'est pas commencée et que le titre change, les contenus
+  // IA non modifiés et non validés sont réécrits automatiquement. Une semaine commencée garde ses contenus.
   const saveTheme = async (weekStart) => {
     const title = draftTitle.trim();
     if (!title) return;
     try {
-      await api.calendar.updateTheme(weekStart, title);
+      const r = await api.calendar.updateTheme(weekStart, title);
       setEditingWeek(null);
-      notify(`Thème de la semaine du ${shortDate(weekStart)} enregistré. Rédaction lancée.`);
       await load();
-      generateWeek(weekStart);
+
+      const g = r?.generation || {};
+      if (g.reset) {
+        notify('Thème enregistré. Les contenus non validés et non modifiés de cette semaine sont réécrits.');
+        generateWeek(weekStart);
+      } else if (g.started) {
+        notify('Thème enregistré. Semaine déjà commencée : les contenus existants sont conservés.');
+      } else if (g.queued) {
+        notify(`Thème de la semaine du ${shortDate(weekStart)} enregistré.`);
+        generateWeek(weekStart);
+      } else {
+        notify(`Thème de la semaine du ${shortDate(weekStart)} enregistré.`);
+      }
     } catch (e) {
       notify(e.message);
     }
