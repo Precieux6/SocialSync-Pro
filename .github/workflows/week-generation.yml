@@ -1,0 +1,35 @@
+name: week-generation
+
+on:
+  repository_dispatch:
+    types: [week-generate]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Génération par étapes
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          OWNER_ID: ${{ github.event.client_payload.owner_id }}
+          WEEK_START: ${{ github.event.client_payload.week_start }}
+        run: |
+          for i in $(seq 1 40); do
+            BODY=$(jq -n --arg o "$OWNER_ID" --arg w "$WEEK_START" '{
+              ownerId: (if $o == "" then null else $o end),
+              weekStart: (if $w == "" then null else $w end)
+            }')
+            RES=$(curl -sS --max-time 120 -X POST "$API_URL/api/internal/week-jobs" \
+              -H "X-Cron-Secret: $CRON_SECRET" -H "Content-Type: application/json" -d "$BODY")
+            echo "$RES"
+            ERRORS=$(echo "$RES" | jq -r '.errors // 0')
+            PENDING=$(echo "$RES" | jq -r '.pending // 0')
+            if [ "$ERRORS" -gt 0 ]; then echo "::error::Erreurs de génération, relancez le job"; exit 1; fi
+            if [ "$PENDING" -eq 0 ]; then echo "Terminé"; exit 0; fi
+          done
+          echo "::error::Trop d'étapes, arrêt de sécurité"; exit 1
