@@ -8,12 +8,12 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const MAX_ATTEMPTS = 2;
 // Plan Vercel Hobby : 60 s maximum par fonction. Budgets réduits en conséquence.
 const MAX_LIGHT_PER_CALL = 4;
-const TIME_BUDGET_MS = 50_000;     // cycle automatique
-const STEP_BUDGET_MS = 45_000;     // une étape à la demande
+const TIME_BUDGET_MS = 50_000;           // cycle automatique
+const STEP_BUDGET_MS = 45_000;           // une étape à la demande
 export const MIN_STEP_START_MS = 20_000; // en dessous, une étape n'est pas lancée
-const SCRIPT_START_MS = 20_000;    // temps restant minimum pour lancer une partie de script
-const LIGHT_START_MS = 15_000;     // temps restant minimum pour lancer un lot
-const MIN_REQUEST_MS = 10_000;     // délai minimum d'un appel Claude
+const SCRIPT_START_MS = 20_000;          // temps restant minimum pour lancer une partie de script
+const LIGHT_START_MS = 15_000;           // temps restant minimum pour lancer un lot
+const MIN_REQUEST_MS = 10_000;           // délai minimum d'un appel Claude
 const CAPTION_MAX = 2_200;
 const SCRIPT_MAX = 40_000;
 const PROMPT_MAX = 2_000;
@@ -377,12 +377,13 @@ function occurrencesOf(rows) {
 
 // Rédige légendes, prompts, tags et premier commentaire d'un lot.
 // Pour les formats à script en parties, le script reste vide : il est rédigé par scriptJob.
+// Les champs saisis à la main (manual_edited_at) ne sont jamais écrasés.
 async function planJob({ db, ownerId, apiKey, reference, weekStart, kind, deadline }) {
   const formats = kind === 'heavy' ? HEAVY_FORMATS : LIGHT_FORMATS;
 
   const { data: rows, error } = await db
     .from('editorial_posts')
-    .select('id, post_date, format, platform, brief, caption, ai_generated_at, status')
+    .select('id, post_date, format, platform, brief, caption, first_comment, image_prompt, thumbnail_prompt, ai_generated_at, status, manual_edited_at')
     .eq('owner_id', ownerId)
     .eq('is_adhoc', false)
     .in('format', formats)
@@ -473,14 +474,18 @@ async function planJob({ db, ownerId, apiKey, reference, weekStart, kind, deadli
       ? row.slides.map((s) => clean(s, SLIDE_MAX)).filter(Boolean).slice(0, SLIDES_MAX)
       : [];
 
+    // Un champ saisi à la main est conservé tel quel
+    const keep = (field, value) =>
+      original.manual_edited_at && String(original[field] || '').trim() ? original[field] : value;
+
     const now = new Date().toISOString();
     const update = {
       brief: original.brief?.trim() ? original.brief : clean(row.brief, 5000),
       caption,
-      first_comment: clean(row.first_comment, 2200),
+      first_comment: keep('first_comment', clean(row.first_comment, 2200)),
       tags,
-      image_prompt: clean(row.image_prompt, PROMPT_MAX),
-      thumbnail_prompt: clean(row.image_prompt, PROMPT_MAX),
+      image_prompt: keep('image_prompt', clean(row.image_prompt, PROMPT_MAX)),
+      thumbnail_prompt: keep('thumbnail_prompt', clean(row.image_prompt, PROMPT_MAX)),
       slides,
       ai_generated_at: now,
       reviewed_at: null,
@@ -630,9 +635,12 @@ async function nextWeekJob(db, ownerId, weekStart) {
   return script ? { kind: 'script', post: script } : null;
 }
 
-// Une étape de rédaction pour une semaine. Appelée en boucle par week-jobs.
+// Une étape de rédaction pour une semaine. Appelée en boucle par la route generate-week et par week-jobs.
+// Crée d'abord les publications manquantes de la semaine, pour pouvoir la rédiger sans ouvrir le calendrier.
 // Une étape qui ne produit rien lève une erreur explicite : un job « vert » sans écriture serait un faux succès.
 export async function runWeekStep({ db, ownerId, apiKey, reference, weekStart, budgetMs = STEP_BUDGET_MS }) {
+  await ensureRange(db, ownerId, weekStart, addDays(weekStart, 6));
+
   const next = await nextWeekJob(db, ownerId, weekStart);
   if (!next) return { weekStart, done: true, requested: 0, generated: 0 };
 
@@ -693,8 +701,8 @@ export async function runContentAutomation({
 
   for (const [yy, mm] of months) {
     try {
-      const { from } = monthRange(yy, mm);
-      await ensureRange(db, ownerId, from);
+      const { from, to } = monthRange(yy, mm);
+      await ensureRange(db, ownerId, from, to);
     } catch (err) {
       report.errors.push(`mois ${yy}-${mm + 1} : ${err.message}`);
     }
