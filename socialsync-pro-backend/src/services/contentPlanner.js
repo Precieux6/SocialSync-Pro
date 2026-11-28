@@ -14,7 +14,7 @@ import { HEAVY_FORMATS, LIGHT_FORMATS, LONG_SCRIPT_PARTS, PART_WORDS } from '../
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const MAX_ATTEMPTS = 2;
 // Plan Vercel Hobby : 60 s maximum par fonction. Budgets réduits en conséquence.
-const MAX_LIGHT_PER_CALL = 4;
+const MAX_LIGHT_PER_CALL = 1;
 const TIME_BUDGET_MS = 50_000;     // cycle automatique (à passer aussi dans internal.js)
 const STEP_BUDGET_MS = 50_000;     // une étape à la demande (route generate-week)
 const MIN_STEP_START_MS = 20_000;  // en dessous, une étape n'est pas lancée (elle expirerait)
@@ -22,7 +22,7 @@ const SCRIPT_START_MS = 20_000;    // temps restant minimum pour lancer une part
 const LIGHT_START_MS = 15_000;     // temps restant minimum pour lancer un lot
 const MIN_REQUEST_MS = 10_000;     // délai minimum d'un appel Claude
 const HEAVY_MAX_TOKENS = 6_000;    // une publication lourde : légende + prompt + script court
-const LIGHT_MAX_TOKENS = 8_000;    // un lot léger
+const LIGHT_MAX_TOKENS = 3_000;    // un lot léger
 const PART_MAX_TOKENS = 6_000;     // une partie de script long
 const CAPTION_MAX = 2_200;
 const SCRIPT_MAX = 40_000;
@@ -156,7 +156,7 @@ const leadFor = (format) => (HEAVY_FORMATS.includes(format) ? HEAVY_LEAD_DAYS : 
 
 // Délai d'un appel Claude : jamais au-delà du budget restant
 const requestOptions = (deadline) =>
-  deadline ? { timeout: Math.max(MIN_REQUEST_MS, deadline - Date.now()) } : undefined;
+  deadline ? { timeout: Math.max(MIN_REQUEST_MS, deadline - Date.now() - 2_000) } : undefined;
 
 // Ajoute le nom de l'étape au message d'erreur, sans perdre le statut HTTP ni le type d'erreur
 function wrapStepError(kind, err) {
