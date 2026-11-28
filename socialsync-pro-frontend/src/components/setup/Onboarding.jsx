@@ -41,6 +41,8 @@ const BTN_SECONDARY = 'px-5 py-2.5 rounded-xl bg-[#F4EFE6] border border-[#E2D5C
 
 export default function Onboarding({ onComplete, onLogout, notify }) {
   const [status, setStatus] = useState({ socialAccounts: false, claudeKey: false, referenceCalendar: false });
+  // Secrets illisibles (clé ENCRYPTION_KEY modifiée, donnée corrompue) : à ressaisir
+  const [unreadable, setUnreadable] = useState({});
 
   // Mémorisé avant tout effet : sans cela, l'écriture de l'étape empêcherait la première étape automatique
   const [hadSavedStep] = useState(() => localStorage.getItem(STEP_KEY) !== null);
@@ -64,6 +66,7 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
     try {
       const r = await api.setup.status();
       setStatus(r.status);
+      setUnreadable(r.unreadable || {});
       if (!hadSavedStep) setStep(firstOpen(r.status));
     } catch (e) {
       setLoadError(e.message);
@@ -82,6 +85,7 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
     try {
       const r = await api.setup.status();
       setStatus(r.status);
+      setUnreadable(r.unreadable || {});
     } catch (e) {
       notify(e.message);
     }
@@ -159,6 +163,13 @@ export default function Onboarding({ onComplete, onLogout, notify }) {
               </button>
             ))}
           </div>
+
+          {(unreadable.socialAccounts || unreadable.claudeKey) && (
+            <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">
+              {unreadable.socialAccounts && 'Les comptes réseaux enregistrés sont illisibles : ressaisissez-les. '}
+              {unreadable.claudeKey && 'La clé Claude enregistrée est illisible : ressaisissez-la.'}
+            </div>
+          )}
         </div>
 
         <div className="bg-white border border-[#E2D5C3] rounded-3xl p-6 md:p-8 shadow-sm space-y-5">
