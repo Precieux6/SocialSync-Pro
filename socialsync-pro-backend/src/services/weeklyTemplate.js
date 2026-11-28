@@ -95,7 +95,15 @@ async function replaceDay(db, ownerId, day, slots) {
     p_day: day,
     p_slots: slots,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`enregistrement du jour ${day} : ${error.message}`);
+}
+
+// Marque le modèle comme initialisé, pour qu'il soit lu à la place du modèle par défaut
+async function ensureTemplateState(db, ownerId) {
+  const { error } = await db
+    .from('weekly_template_state')
+    .upsert({ owner_id: ownerId }, { onConflict: 'owner_id' });
+  if (error) throw new Error(`initialisation du modèle : ${error.message}`);
 }
 
 // Enregistre les mêmes créneaux sur un ou plusieurs jours.
@@ -106,6 +114,7 @@ export async function saveTemplateDays(db, ownerId, days, slots) {
     for (let d = 0; d < 7; d++) await replaceDay(db, ownerId, d, current.days[d]);
   }
   for (const d of days) await replaceDay(db, ownerId, d, slots);
+  await ensureTemplateState(db, ownerId);
 }
 
 // Références d'un créneau, transmises à Claude
