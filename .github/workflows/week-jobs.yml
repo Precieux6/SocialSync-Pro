@@ -5,17 +5,33 @@ on:
     - cron: '10 * * * *'
   workflow_dispatch:
 
+concurrency:
+  group: week-jobs
+  cancel-in-progress: false
+
 jobs:
-  call-week-jobs:
+  generate-weeks:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 55
     steps:
-      - name: Appel de l'endpoint week-jobs
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: socialsync-pro-backend/package-lock.json
+
+      - name: Installer les dépendances du backend
+        working-directory: socialsync-pro-backend
+        run: npm ci
+
+      - name: Rédiger les semaines en file
+        working-directory: socialsync-pro-backend
         env:
-          API_URL: ${{ secrets.API_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
-        run: |
-          curl -sS -X POST "${API_URL}/api/internal/week-jobs" \
-            -H "X-Cron-Secret: ${CRON_SECRET}" \
-            --max-time 120 \
-            --fail-with-body
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+        run: node scripts/generate-weeks.mjs
