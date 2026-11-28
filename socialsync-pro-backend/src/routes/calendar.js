@@ -1,14 +1,16 @@
 // socialsync-pro-backend/src/routes/calendar.js
 import express from 'express';
-import { requireOwner, requireRole } from '../middleware/auth.js';
+import { requireRole } from '../middleware/auth.js';
 import {
   addDays,
   dayIndexOf,
+  endOfWeek,
   ensureRange,
+  isValidIsoDate,
   isWeekEnd,
   isWeekStart,
   isoWeekNumber,
-  isValidIsoDate,
+  parisToday,
 } from '../services/calendarBlocks.js';
 import { FORMATS } from '../config/formats.js';
 
@@ -19,25 +21,24 @@ const TAG_RE = /^[@#]?[\p{L}\p{N}_.\-]{1,50}$/u;
 const LOCAL_DT_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
 const DEFAULT_TZ = 'Europe/Paris';
 const HTTPS_RE = /^https:\/\//;
-const MAX_RANGE_DAYS = 42;
 const MIN_RANGE_DAYS = 7;
+const MAX_RANGE_DAYS = 42;
 
-// Rôles autorisés à saisir ou modifier un thème de semaine (lecture seule exclue)
 const THEME_EDITORS = requireRole('Propriétaire', 'Éditeur', 'Community Manager');
 
-// Champs dont la modification remet un contenu généré en attente de relecture
+// Un changement de l'un de ces champs par un humain marque le post comme « modifié à la main »
 const CONTENT_KEYS = [
   'brief', 'caption', 'image_prompt', 'thumbnail_prompt', 'first_comment',
   'tags', 'script', 'slides', 'media_urls', 'video_url',
 ];
 
-// Plage demandée par l'interface : du dimanche au samedi, de 7 à 42 jours
+// Plage du lundi au dimanche (grille mois ou semaine)
 function parseRange(req) {
   const from = String(req.query.from || '');
   const to = String(req.query.to || '');
-  if (!isValidIsoDate(from) || !isValidIsoDate(to)) return { error: 'Dates invalides (YYYY-MM-DD).' };
-  if (!isWeekStart(from)) return { error: 'La période doit commencer un dimanche.' };
-  if (!isWeekEnd(to)) return { error: 'La période doit se terminer un samedi.' };
+  if (!isValidIsoDate(from) || !isValidIsoDate(to)) return { error: 'Dates invalides (AAAA-MM-JJ).' };
+  if (!isWeekStart(from)) return { error: 'La période doit commencer un lundi.' };
+  if (!isWeekEnd(to)) return { error: 'La période doit se terminer un dimanche.' };
 
   const span = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 864e5) + 1;
   if (span < MIN_RANGE_DAYS || span > MAX_RANGE_DAYS) {
@@ -100,7 +101,7 @@ async function spaceTimezone(req) {
   }
 }
 
-// Thèmes indexés par dimanche d'ouverture de semaine, limités à la plage affichée
+// Thèmes indexés par lundi de semaine, limités à la plage affichée
 async function loadThemes(req, from, to) {
   const { data, error } = await req.db
     .from('weeks_themes')
@@ -123,9 +124,12 @@ async function loadPost(req, id) {
   return data;
 }
 
-// Efface les contenus générés et non validés d'une semaine, pour les réécrire avec le nouveau thème.
-// Ne touche ni aux publications validées, ni aux publications programmées ou publiées, ni aux publications hors plan.
-async function resetUnvalidatedWeek(req, weekStart) {
+// Une semaine est commencée dès que son lundi est passé ou est aujourd'hui : plus aucun contenu n'est réécrit
+const weekStarted = (weekStart) => weekStart <= parisToday();
+
+// Efface le contenu IA d'une semaine non commencée, pour le réécrire avec le nouveau thème.
+// Protégés : publications modifiées à la main, validées, programmées, publiées, hors plan.
+async function resetAiContentOfWeek(req, weekStart) {
   const { error } = await req.db
     .from('editorial_posts')
     .update({
@@ -144,14 +148,14 @@ async function resetUnvalidatedWeek(req, weekStart) {
     .eq('owner_id', req.ownerId)
     .eq('is_adhoc', false)
     .eq('status', 'brouillon')
+    .is('manual_edited_at', null)
+    .is('reviewed_at', null)
     .gte('post_date', weekStart)
-    .lte('post_date', addDays(weekStart, 6))
-    .not('ai_generated_at', 'is', null)
-    .is('reviewed_at', null);
+    .lte('post_date', endOfWeek(weekStart));
   if (error) throw new Error(error.message);
 }
 
-// Une valeur vide et une valeur absente sont équivalentes : évite une relecture inutile
+// Une valeur vide et une valeur absente sont équivalentes
 const emptyish = (v) => v === null || v === undefined || v === '' || (Array.isArray(v) && v.length === 0);
 const sameContent = (a, b) =>
   JSON.stringify(emptyish(a) ? null : a) === JSON.stringify(emptyish(b) ? null : b);
@@ -165,21 +169,21 @@ router.get('/themes', async (req, res) => {
       .not('week_start', 'is', null)
       .order('week_start', { ascending: true });
     if (error) return res.status(500).json({ success: false, error: error.message });
-
     res.json({ success: true, themes: data || [], isDefault: !data || data.length === 0 });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Saisie d'un thème. Si le titre change, les contenus non validés de la semaine sont effacés et réécrits.
-// La rédaction est mise en file côté serveur : elle se poursuit même si l'onglet est fermé (job week-jobs).
+// Saisie du thème d'une semaine (lundi au format AAAA-MM-JJ).
+// Si le titre change et que la semaine n'est pas commencée : contenus IA non modifiés et non validés réécrits.
+// La rédaction est mise en file (gen_requested_at) et poursuivie par week-jobs.
 router.put('/themes/:weekStart', THEME_EDITORS, async (req, res) => {
   const weekStart = String(req.params.weekStart || '');
   const title = String(req.body?.title || '').trim().slice(0, 200);
 
   if (!isWeekStart(weekStart)) {
-    return res.status(400).json({ success: false, error: 'Date de semaine invalide (un dimanche au format YYYY-MM-DD).' });
+    return res.status(400).json({ success: false, error: 'Date de semaine invalide (un lundi au format AAAA-MM-JJ).' });
   }
   if (!title) return res.status(400).json({ success: false, error: 'Titre vide.' });
 
@@ -193,7 +197,14 @@ router.put('/themes/:weekStart', THEME_EDITORS, async (req, res) => {
     if (pErr) return res.status(500).json({ success: false, error: pErr.message });
 
     const titleChanged = String(prev?.title ?? '').trim() !== title;
-    if (titleChanged) await resetUnvalidatedWeek(req, weekStart);
+    const started = weekStarted(weekStart);
+
+    if (prev && !titleChanged) {
+      return res.json({ success: true, generation: { queued: false, reset: false, started, weekStart } });
+    }
+
+    const reset = titleChanged && !started;
+    if (reset) await resetAiContentOfWeek(req, weekStart);
 
     const now = new Date().toISOString();
     const { data, error } = await req.db
@@ -215,14 +226,14 @@ router.put('/themes/:weekStart', THEME_EDITORS, async (req, res) => {
     res.json({
       success: true,
       updatedWeek: data,
-      generation: { pending: true, queued: true, reset: titleChanged, weekStart },
+      generation: { queued: true, reset, started, weekStart },
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Publications d'une plage (du dimanche au samedi). Les publications manquantes sont créées avant lecture.
+// Publications d'une plage lundi–dimanche. Les publications manquantes sont créées avant lecture.
 router.get('/posts', async (req, res) => {
   const range = parseRange(req);
   if (range.error) return res.status(400).json({ success: false, error: range.error });
@@ -244,20 +255,13 @@ router.get('/posts', async (req, res) => {
       loadThemes(req, range.from, range.to),
       spaceTimezone(req),
     ]);
-    res.json({
-      success: true,
-      from: range.from,
-      to: range.to,
-      themes,
-      timezone,
-      posts: data || [],
-    });
+    res.json({ success: true, from: range.from, to: range.to, themes, timezone, posts: data || [] });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Publication hors plan. Le numéro de semaine ISO est calculé par le serveur.
+// Publication hors plan
 router.post('/posts', async (req, res) => {
   const postDate = String(req.body?.post_date || '');
   const format = String(req.body?.format || '');
@@ -304,7 +308,6 @@ router.put('/posts/:id', async (req, res) => {
     if (!Array.isArray(b.slides)) {
       return res.status(400).json({ success: false, error: 'Slides : liste attendue.' });
     }
-    // Les diapositives vides (champs laissés à blanc dans l'éditeur) ne sont pas conservées
     patch.slides = b.slides.map((s) => String(s).trim().slice(0, 300)).filter(Boolean).slice(0, 8);
   }
 
@@ -345,9 +348,11 @@ router.put('/posts/:id', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Publication introuvable ou déjà publiée.' });
     }
 
-    // Toute modification d'un contenu généré doit être relue à nouveau
-    if (current.ai_generated_at && CONTENT_KEYS.some((k) => k in patch && !sameContent(patch[k], current[k]))) {
-      patch.reviewed_at = null;
+    // Toute modification humaine d'un champ de contenu protège le post de la réécriture automatique
+    const humanChange = CONTENT_KEYS.some((k) => k in patch && !sameContent(patch[k], current[k]));
+    if (humanChange) {
+      patch.manual_edited_at = new Date().toISOString();
+      if (current.ai_generated_at) patch.reviewed_at = null;
     }
     patch.updated_at = new Date().toISOString();
 
@@ -367,7 +372,7 @@ router.put('/posts/:id', async (req, res) => {
   }
 });
 
-// La relecture humaine débloque programmation et publication
+// Validation humaine : débloque programmation et publication, et protège le contenu
 router.post('/posts/:id/validate', async (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
 
@@ -485,11 +490,7 @@ router.post('/posts/:id/publish-now', async (req, res) => {
       .single();
     if (error) return res.status(500).json({ success: false, error: error.message });
 
-    res.status(202).json({
-      success: true,
-      post: data,
-      message: 'Publication enregistrée pour envoi immédiat.',
-    });
+    res.status(202).json({ success: true, post: data, message: 'Publication enregistrée pour envoi immédiat.' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
