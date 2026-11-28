@@ -16,6 +16,7 @@ const SCRIPTS_BUDGET_MS = 50_000;   // route dédiée aux scripts longs (maxDura
 const WEEK_BUDGET_MS = 45_000;      // job horaire week-jobs : sous la limite de 60 s du plan Hobby
 const WEEK_MIN_STEP_MS = 15_000;    // temps restant minimum pour lancer une étape
 const STUCK_AFTER_MS = 15 * 60_000;
+const MAX_DETAILS = 5;              // nombre maximum de causes d'erreur renvoyées dans la réponse
 
 const PUBLISHERS = {
   instagram: publishInstagram,
@@ -31,10 +32,20 @@ function secretMatches(received) {
 }
 
 // Vercel Cron envoie « Authorization: Bearer <CRON_SECRET> ».
-// Les appels manuels et cron-job.org peuvent utiliser l'en-tête X-Cron-Secret.
+// Les appels manuels et GitHub Actions peuvent utiliser l'en-tête X-Cron-Secret.
 function isAuthorized(req) {
   const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   return secretMatches(req.headers['x-cron-secret']) || secretMatches(bearer);
+}
+
+// Libellé lisible d'une erreur : statut HTTP et type d'erreur renvoyés par Anthropic ou Supabase, si présents
+function describeError(err) {
+  const parts = [];
+  if (err?.status) parts.push(`HTTP ${err.status}`);
+  const type = err?.error?.error?.type || err?.error?.type || err?.code;
+  if (type) parts.push(String(type));
+  parts.push(err?.message || String(err));
+  return parts.join(' · ');
 }
 
 // Identifiants réseau d'un espace, déchiffrés uniquement côté serveur
@@ -293,7 +304,8 @@ async function scriptsJob(req, res) {
 }
 
 // GET|POST /api/internal/week-jobs : poursuit la rédaction des semaines mises en file par la saisie d'un thème.
-// Appelé toutes les heures par cron-job.org. Chaque exécution reste sous 45 s.
+// Appelé toutes les heures par GitHub Actions et pg_cron. Chaque exécution reste sous 45 s.
+// La réponse indique les causes d'erreur (details), sans jamais contenir de secret.
 async function weekJobs(req, res) {
   if (!isAuthorized(req)) return res.status(401).json({ success: false, error: 'Non autorisé.' });
 
@@ -313,7 +325,7 @@ async function weekJobs(req, res) {
     const pending = (rows || []).filter(
       (r) => !r.gen_done_at || new Date(r.gen_done_at) < new Date(r.gen_requested_at)
     );
-    const summary = { pending: pending.length, steps: 0, weeksDone: 0, errors: 0 };
+    const summary = { pending: pending.length, steps: 0, weeksDone: 0, errors: 0, details: [] };
     const configs = new Map();
 
     for (const job of pending) {
@@ -335,7 +347,7 @@ async function weekJobs(req, res) {
           });
         }
         const cfg = configs.get(job.owner_id);
-        if (!cfg.apiKey) throw new Error('clé Claude absente ou illisible');
+        if (!cfg.apiKey) throw new Error('clé Claude absente ou illisible (ENCRYPTION_KEY ?)');
         if (!cfg.reference) throw new Error('calendrier de référence absent');
 
         let done = false;
@@ -363,14 +375,17 @@ async function weekJobs(req, res) {
         }
       } catch (err) {
         summary.errors += 1;
-        console.error('week-jobs : semaine', job.week_start, ':', err.message);
+        const detail = `${job.week_start} : ${describeError(err)}`;
+        if (summary.details.length < MAX_DETAILS) summary.details.push(detail);
+        console.error('week-jobs : semaine', job.week_start, ':', describeError(err));
+        if (err?.stack) console.error(err.stack);
       }
     }
 
     res.json({ success: true, ...summary });
   } catch (err) {
-    console.error('week-jobs :', err);
-    res.status(500).json({ success: false, error: 'Erreur interne du job.' });
+    console.error('week-jobs :', describeError(err));
+    res.status(500).json({ success: false, error: 'Erreur interne du job.', detail: describeError(err) });
   }
 }
 
