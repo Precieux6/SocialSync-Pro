@@ -10,8 +10,9 @@ import { isWeekStart } from '../services/calendarBlocks.js';
 const router = express.Router();
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const PLATFORMS = ['instagram', 'facebook', 'youtube', 'tiktok'];
-// Plan Vercel Hobby : 60 s maximum par fonction
-const MANUAL_BUDGET_MS = 50_000;
+// Plan Hobby : 60 s maximum. La route générale laisse une marge pour la réponse.
+const MANUAL_BUDGET_MS = 40_000;
+const WEEK_STEP_BUDGET_MS = 40_000;
 
 const SYSTEM_PROMPT = `
 Vous êtes l'assistant éditorial officiel pour SocialSync Pro.
@@ -22,16 +23,29 @@ Respectez scrupuleusement ces règles :
 `;
 
 // Limite par utilisateur (et non par adresse IP, partagée par toute l'équipe).
-// Une semaine complète demande plusieurs étapes : la limite est volontairement plus haute.
+// Placé après requireAuth : req.user est déjà renseigné.
 const aiLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  limit: 300,
+  limit: 30,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.user?.id ?? req.ip,
   message: { success: false, error: "Trop de requêtes vers l'IA, veuillez réessayer plus tard." },
 });
-router.use(aiLimiter);
+
+// La rédaction d'une semaine enchaîne de nombreuses étapes : limite distincte, plus large
+const weekLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 400,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id ?? req.ip,
+  message: { success: false, error: 'Trop d\'étapes de rédaction, veuillez patienter.' },
+});
+
+router.use((req, res, next) => (
+  req.path === '/generate-week' ? weekLimiter(req, res, next) : aiLimiter(req, res, next)
+));
 
 // Nettoie une saisie utilisateur avant de l'insérer dans un prompt
 const clean = (value, max) => String(value ?? '').replace(/[\r\n"]+/g, ' ').trim().slice(0, max);
@@ -44,7 +58,7 @@ async function loadSpaceAiConfig(req) {
 
   const apiKey = decryptSecret(encrypted);
   if (!apiKey) {
-    return { error: 'Aucune clé Claude valide pour cet espace. Le propriétaire doit la renseigner dans Mon profil.' };
+    return { error: 'Aucune clé Claude lisible pour cet espace (vérifiez ENCRYPTION_KEY ou ressaisissez la clé).' };
   }
 
   const { data: ref, error: rErr } = await req.db.rpc('get_space_reference_calendar', { p_owner: req.ownerId });
@@ -73,7 +87,7 @@ router.post('/generate-caption', async (req, res) => {
       system += `\n\nCONTEXTE ET STYLE DU CALENDRIER DE RÉFÉRENCE :\n${cfg.reference}`;
     }
 
-    const anthropic = new Anthropic({ apiKey: cfg.apiKey });
+    const anthropic = new Anthropic({ apiKey: cfg.apiKey, maxRetries: 1 });
     const response = await anthropic.messages.create({
       model: CLAUDE_MODEL,
       max_tokens: 1024,
@@ -82,7 +96,7 @@ router.post('/generate-caption', async (req, res) => {
         role: 'user',
         content: `Rédige une légende captivante pour la plateforme ${platform.toUpperCase()}.\nSujet/Titre : "${title || theme}"\nThème : "${theme || title}"`,
       }],
-    });
+    }, { timeout: MANUAL_BUDGET_MS });
 
     const caption = response.content.find((b) => b.type === 'text')?.text;
     if (!caption) {
@@ -109,7 +123,7 @@ router.post('/generate-prompt', (req, res) => {
   });
 });
 
-// POST /api/ai/generate-now : lance le cycle de rédaction pour l'espace courant (mois en cours et suivant)
+// POST /api/ai/generate-now : cycle automatique borné (conservé pour usage manuel ponctuel)
 router.post(
   '/generate-now',
   requireRole('Propriétaire', 'Éditeur', 'Community Manager'),
@@ -139,37 +153,39 @@ router.post(
   }
 );
 
-// POST /api/ai/generate-week : une étape de rédaction pour une semaine (dimanche d'ouverture)
+// POST /api/ai/generate-week : une étape de rédaction pour la semaine commençant le lundi weekStart.
+// L'interface l'appelle en boucle jusqu'à « done ».
 router.post(
   '/generate-week',
   requireRole('Propriétaire', 'Éditeur', 'Community Manager'),
   async (req, res) => {
     const weekStart = String(req.body?.weekStart || '');
     if (!isWeekStart(weekStart)) {
-      return res.status(400).json({ success: false, error: 'Semaine invalide (un dimanche au format YYYY-MM-DD).' });
+      return res.status(400).json({ success: false, error: 'Semaine invalide (un lundi au format AAAA-MM-JJ).' });
     }
 
     try {
       const cfg = await loadSpaceAiConfig(req);
       if (cfg.error) return res.status(400).json({ success: false, error: cfg.error });
       if (!cfg.reference) {
-        return res.status(400).json({ success: false, error: 'Importez le calendrier de référence avant de générer.' });
+        return res.status(400).json({ success: false, error: 'Importez le calendrier de référence avant de rédiger.' });
       }
 
-      const step = await runWeekStep({
+      const r = await runWeekStep({
         db: req.db,
         ownerId: req.ownerId,
         apiKey: cfg.apiKey,
         reference: cfg.reference,
         weekStart,
+        budgetMs: WEEK_STEP_BUDGET_MS,
       });
-      res.json({ success: true, ...step });
+      res.json({ success: true, ...r });
     } catch (err) {
       if (err?.status === 401) {
         return res.status(400).json({ success: false, error: 'La clé Claude de cet espace est refusée par Anthropic.' });
       }
       console.error('generate-week :', err);
-      res.status(500).json({ success: false, error: 'Erreur lors de la rédaction de la semaine.' });
+      res.status(500).json({ success: false, error: err.message || 'Erreur lors de la rédaction.' });
     }
   }
 );
