@@ -1,4 +1,4 @@
-name: week-generation
+name: generate-weeks
 
 on:
   schedule:
@@ -7,10 +7,6 @@ on:
 
 permissions:
   contents: read
-
-concurrency:
-  group: week-generation
-  cancel-in-progress: false
 
 jobs:
   generate:
