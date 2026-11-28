@@ -4,7 +4,12 @@ import crypto from 'crypto';
 import { getSupabaseAdmin } from '../utils/supabaseAdmin.js';
 import { decryptSecret } from '../utils/crypto.js';
 import { publishInstagram } from '../services/publishers/instagram.js';
-import { runContentAutomation, runWeekStep, parisToday } from '../services/contentPlanner.js';
+import {
+  MIN_STEP_START_MS,
+  parisToday,
+  runContentAutomation,
+  runWeekStep,
+} from '../services/contentPlanner.js';
 import { sendVideoReminders } from '../services/reminders.js';
 
 const router = express.Router();
@@ -12,11 +17,11 @@ const router = express.Router();
 const BATCH_SIZE = 5;
 const MAX_ATTEMPTS = 3;
 const CONTENT_BUDGET_MS = 50_000;
-const SCRIPTS_BUDGET_MS = 50_000;   // route dédiée aux scripts longs (maxDuration à prévoir)
-const WEEK_BUDGET_MS = 45_000;      // job horaire week-jobs : sous la limite de 60 s du plan Hobby
-const WEEK_MIN_STEP_MS = 15_000;    // temps restant minimum pour lancer une étape
+const SCRIPTS_BUDGET_MS = 50_000;
+const WEEK_BUDGET_MS = 45_000;                       // sous la limite de 60 s du plan Hobby
+const WEEK_MIN_STEP_MS = MIN_STEP_START_MS + 5_000;  // temps restant minimum pour lancer une étape
 const STUCK_AFTER_MS = 15 * 60_000;
-const MAX_DETAILS = 5;              // nombre maximum de causes d'erreur renvoyées dans la réponse
+const MAX_DETAILS = 5;
 
 const PUBLISHERS = {
   instagram: publishInstagram,
@@ -32,13 +37,13 @@ function secretMatches(received) {
 }
 
 // Vercel Cron envoie « Authorization: Bearer <CRON_SECRET> ».
-// Les appels manuels et GitHub Actions peuvent utiliser l'en-tête X-Cron-Secret.
+// Les appels manuels et GitHub Actions utilisent l'en-tête X-Cron-Secret.
 function isAuthorized(req) {
   const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   return secretMatches(req.headers['x-cron-secret']) || secretMatches(bearer);
 }
 
-// Libellé lisible d'une erreur : statut HTTP et type d'erreur renvoyés par Anthropic ou Supabase, si présents
+// Libellé lisible d'une erreur : statut HTTP et type d'erreur, si présents
 function describeError(err) {
   const parts = [];
   if (err?.status) parts.push(`HTTP ${err.status}`);
@@ -140,7 +145,6 @@ async function publishDue(req, res) {
         .select('id')
         .maybeSingle();
       if (cErr) {
-        // Une erreur sur un post n'arrête pas le lot
         console.error('publish-due : verrou impossible', post.id, cErr.message);
         results.failed += 1;
         continue;
@@ -243,7 +247,7 @@ async function contentJob(req, res) {
   }
 }
 
-// GET|POST /api/internal/scripts-job : scripts longs, partie par partie (durée maximale plus élevée)
+// GET|POST /api/internal/scripts-job : scripts longs, partie par partie
 async function scriptsJob(req, res) {
   if (!isAuthorized(req)) return res.status(401).json({ success: false, error: 'Non autorisé.' });
 
@@ -303,9 +307,8 @@ async function scriptsJob(req, res) {
   }
 }
 
-// GET|POST /api/internal/week-jobs : poursuit la rédaction des semaines mises en file par la saisie d'un thème.
-// Appelé toutes les heures par GitHub Actions et pg_cron. Chaque exécution reste sous 45 s.
-// La réponse indique les causes d'erreur (details), sans jamais contenir de secret.
+// GET|POST /api/internal/week-jobs : poursuit la rédaction des semaines mises en file (gen_requested_at).
+// Appelée par GitHub Actions. Chaque exécution reste sous 45 s. Une erreur renvoie errors > 0 (job en échec).
 async function weekJobs(req, res) {
   if (!isAuthorized(req)) return res.status(401).json({ success: false, error: 'Non autorisé.' });
 
@@ -362,6 +365,7 @@ async function weekJobs(req, res) {
           });
           summary.steps += 1;
           if (r.done) done = true;
+          else if (r.skipped) break; // budget insuffisant : on reprend à la prochaine exécution
         }
 
         if (done) {
@@ -378,7 +382,6 @@ async function weekJobs(req, res) {
         const detail = `${job.week_start} : ${describeError(err)}`;
         if (summary.details.length < MAX_DETAILS) summary.details.push(detail);
         console.error('week-jobs : semaine', job.week_start, ':', describeError(err));
-        if (err?.stack) console.error(err.stack);
       }
     }
 
@@ -411,7 +414,6 @@ async function remindersJob(req, res) {
         const r = await sendVideoReminders({ admin, ownerId: o.owner_id, today });
         summary.sent += r.sent || 0;
       } catch (err) {
-        // Un espace en erreur n'empêche pas les autres ; le détail reste dans les journaux
         console.error('reminders : espace', o.owner_id, ':', err.message);
         summary.errors += 1;
       }
