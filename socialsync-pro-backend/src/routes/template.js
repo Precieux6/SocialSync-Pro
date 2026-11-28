@@ -10,13 +10,12 @@ import {
   saveTemplateDays,
   syncFutureFromTemplate,
 } from '../services/weeklyTemplate.js';
-import { runContentAutomation } from '../services/contentPlanner.js';
+import { parisToday, runContentAutomation } from '../services/contentPlanner.js';
 
 const router = express.Router();
 const WRITE = requireRole('Propriétaire', 'Éditeur', 'Community Manager');
-const MANUAL_BUDGET_MS = 240_000;
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
+// Plan Hobby : 60 s maximum. La sauvegarde et la synchronisation occupent le reste.
+const MANUAL_BUDGET_MS = 35_000;
 
 // Clé Claude et calendrier de référence de l'espace actif, via les fonctions SQL
 async function loadAiConfig(req) {
@@ -24,7 +23,7 @@ async function loadAiConfig(req) {
   if (kErr) return { error: 'Accès à la configuration IA refusé.' };
 
   const apiKey = decryptSecret(encrypted);
-  if (!apiKey) return { error: 'Aucune clé Claude valide pour cet espace.' };
+  if (!apiKey) return { error: 'Aucune clé Claude lisible pour cet espace (vérifiez ENCRYPTION_KEY ou ressaisissez la clé).' };
 
   const { data: ref, error: rErr } = await req.db.rpc('get_space_reference_calendar', { p_owner: req.ownerId });
   if (rErr) return { error: 'Lecture du calendrier de référence refusée.' };
@@ -57,8 +56,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// PUT /api/template : enregistre les créneaux pour un ou plusieurs jours,
-// synchronise les publications futures non rédigées, puis relance la rédaction.
+// PUT /api/template : enregistre les créneaux, synchronise les publications futures non rédigées,
+// puis lance une rédaction bornée dans le temps. Le reste est traité par week-jobs ou les crons.
 // Corps : { days: [0, 2, 3], slots: [ { format, publish_time, brief, ... } ] }
 router.put('/', WRITE, async (req, res) => {
   const rawDays = req.body?.days;
@@ -80,7 +79,7 @@ router.put('/', WRITE, async (req, res) => {
 
   try {
     await saveTemplateDays(req.db, req.ownerId, days, slots);
-    const sync = await syncFutureFromTemplate(req.db, req.ownerId, days, todayIso());
+    const sync = await syncFutureFromTemplate(req.db, req.ownerId, days, parisToday());
 
     let generation;
     const cfg = await loadAiConfig(req);
