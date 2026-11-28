@@ -53,6 +53,7 @@ export function SocialAccountsForm({ onSaved, notify }) {
   const [current, setCurrent] = useState(null);
   const [draft, setDraftState] = useState(secretDrafts.social);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
 
   const setDraft = (next) => {
     const value = typeof next === 'function' ? next(secretDrafts.social) : next;
@@ -66,13 +67,17 @@ export function SocialAccountsForm({ onSaved, notify }) {
   };
 
   useEffect(() => {
-    reload().catch((e) => notify(e.message));
+    reload().catch((e) => {
+      setError(e.message);
+      notify(e.message);
+    });
   }, [notify]);
 
   const setField = (pid, key, value) =>
     setDraft((d) => ({ ...d, [pid]: { ...(d[pid] || {}), [key]: value } }));
 
   const save = async () => {
+    setError(null);
     const payload = {};
     for (const [pid, fields] of Object.entries(draft)) {
       const clean = Object.fromEntries(
@@ -94,16 +99,25 @@ export function SocialAccountsForm({ onSaved, notify }) {
       notify('Comptes réseaux enregistrés.');
       if (onSaved) await onSaved();
     } catch (e) {
+      // Erreur affichée dans le formulaire : elle reste visible tant qu'elle n'est pas corrigée
+      setError(e.message);
       notify(e.message);
     } finally {
       setBusy(false);
     }
   };
 
-  if (!current) return <p className="text-xs text-stone-500">Chargement...</p>;
+  if (!current) {
+    return error
+      ? <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">{error}</div>
+      : <p className="text-xs text-stone-500">Chargement...</p>;
+  }
 
   return (
     <div className="space-y-5">
+      {error && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">{error}</div>
+      )}
       {PLATFORMS.map((p) => (
         <div key={p.id} className="bg-[#FAF7F2] border border-[#E2D5C3] rounded-2xl p-4 space-y-3">
           <div className="flex items-center justify-between">
