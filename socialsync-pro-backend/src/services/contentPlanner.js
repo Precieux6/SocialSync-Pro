@@ -17,9 +17,13 @@ const MAX_ATTEMPTS = 2;
 const MAX_LIGHT_PER_CALL = 4;
 const TIME_BUDGET_MS = 50_000;     // cycle automatique (à passer aussi dans internal.js)
 const STEP_BUDGET_MS = 50_000;     // une étape à la demande (route generate-week)
+const MIN_STEP_START_MS = 20_000;  // en dessous, une étape n'est pas lancée (elle expirerait)
 const SCRIPT_START_MS = 20_000;    // temps restant minimum pour lancer une partie de script
 const LIGHT_START_MS = 15_000;     // temps restant minimum pour lancer un lot
-const MIN_REQUEST_MS = 10_000;
+const MIN_REQUEST_MS = 10_000;     // délai minimum d'un appel Claude
+const HEAVY_MAX_TOKENS = 6_000;    // une publication lourde : légende + prompt + script court
+const LIGHT_MAX_TOKENS = 8_000;    // un lot léger
+const PART_MAX_TOKENS = 6_000;     // une partie de script long
 const CAPTION_MAX = 2_200;
 const SCRIPT_MAX = 40_000;
 const PROMPT_MAX = 2_000;
@@ -154,6 +158,15 @@ const leadFor = (format) => (HEAVY_FORMATS.includes(format) ? HEAVY_LEAD_DAYS : 
 const requestOptions = (deadline) =>
   deadline ? { timeout: Math.max(MIN_REQUEST_MS, deadline - Date.now()) } : undefined;
 
+// Ajoute le nom de l'étape au message d'erreur, sans perdre le statut HTTP ni le type d'erreur
+function wrapStepError(kind, err) {
+  const name = err?.name && err.name !== 'Error' ? `${err.name} : ` : '';
+  const wrapped = new Error(`étape ${kind} : ${name}${err?.message || String(err)}`);
+  if (err?.status) wrapped.status = err.status;
+  if (err?.error) wrapped.error = err.error;
+  return wrapped;
+}
+
 // Extrait et parse le JSON de la réponse
 function parseJson(text) {
   const cleaned = String(text).replace(/```json|```/g, '').trim();
@@ -283,7 +296,7 @@ function checkPlan(plan) {
   return plan;
 }
 
-export async function generateWeek({ apiKey, reference, theme, posts, examples = [], deadline }) {
+export async function generateWeek({ apiKey, reference, theme, posts, examples = [], deadline, maxTokens = LIGHT_MAX_TOKENS }) {
   const anthropic = new Anthropic({ apiKey });
   const system = buildSystem(PLANNER_SYSTEM, reference, examples);
   const userContent = JSON.stringify({ theme, publications: posts });
@@ -292,13 +305,13 @@ export async function generateWeek({ apiKey, reference, theme, posts, examples =
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const response = await anthropic.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: 16000,
+      max_tokens: maxTokens,
       system,
       messages: [{ role: 'user', content: userContent }],
     }, requestOptions(deadline));
 
     if (response.stop_reason === 'max_tokens') {
-      lastError = new Error('Réponse tronquée (limite de tokens atteinte).');
+      lastError = new Error(`Réponse tronquée (limite de ${maxTokens} tokens atteinte).`);
       continue;
     }
 
@@ -306,7 +319,7 @@ export async function generateWeek({ apiKey, reference, theme, posts, examples =
     try {
       return checkPlan(parseJson(text));
     } catch (err) {
-      lastError = err;
+      lastError = new Error(`${err.message} (stop_reason=${response.stop_reason}, ${text.length} caractères reçus)`);
     }
   }
   throw lastError;
@@ -337,7 +350,7 @@ async function generatePart({ apiKey, reference, examples, post, theme, part, to
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const response = await anthropic.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: 6000,
+      max_tokens: PART_MAX_TOKENS,
       system,
       messages: [{ role: 'user', content: user }],
     }, requestOptions(deadline));
@@ -384,7 +397,7 @@ async function planJob({ db, ownerId, apiKey, reference, weekStart, kind, deadli
     .gte('post_date', weekStart)
     .lte('post_date', addDays(weekStart, 6))
     .order('post_date', { ascending: true });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`lecture des publications : ${error.message}`);
 
   const occurrence = occurrencesOf(rows || []);
 
@@ -431,6 +444,7 @@ async function planJob({ db, ownerId, apiKey, reference, weekStart, kind, deadli
     examples,
     posts: payloadPosts,
     deadline,
+    maxTokens: kind === 'heavy' ? HEAVY_MAX_TOKENS : LIGHT_MAX_TOKENS,
   });
 
   // Thème absent : Claude en propose un. L'échec d'enregistrement ne bloque pas les légendes.
@@ -514,7 +528,7 @@ async function scriptJob({ db, ownerId, apiKey, reference, post, deadline, maxPa
     .eq('id', post.id)
     .eq('owner_id', ownerId)
     .maybeSingle();
-  if (rErr) throw new Error(rErr.message);
+  if (rErr) throw new Error(`lecture du script : ${rErr.message}`);
 
   const texts = Array.isArray(row?.script_parts) ? [...row.script_parts] : [];
 
@@ -544,7 +558,7 @@ async function scriptJob({ db, ownerId, apiKey, reference, post, deadline, maxPa
         .eq('id', post.id)
         .eq('owner_id', ownerId)
         .neq('status', 'publie');
-      if (sErr) throw new Error(sErr.message);
+      if (sErr) throw new Error(`enregistrement de la partie ${i} : ${sErr.message}`);
     }
   }
 
@@ -561,7 +575,7 @@ async function scriptJob({ db, ownerId, apiKey, reference, post, deadline, maxPa
     .eq('id', post.id)
     .eq('owner_id', ownerId)
     .neq('status', 'publie');
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`enregistrement du script : ${error.message}`);
   return { weekStart, kind: 'script', requested: 1, generated: 1 };
 }
 
@@ -612,7 +626,7 @@ async function nextWeekJob(db, ownerId, weekStart) {
     .gte('post_date', weekStart)
     .lte('post_date', addDays(weekStart, 6))
     .order('post_date', { ascending: true });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`lecture de la semaine : ${error.message}`);
 
   const rows = data || [];
   const todo = rows.filter((p) => !p.ai_generated_at && !p.caption?.trim());
@@ -626,16 +640,28 @@ async function nextWeekJob(db, ownerId, weekStart) {
 }
 
 // Une étape de rédaction pour une semaine. L'interface l'appelle en boucle, ou le job horaire (week-jobs).
-// budgetMs permet au job horaire de borner chaque étape au temps restant de son exécution.
+// Une étape qui ne produit rien lève une erreur explicite : un job « vert » sans écriture est un échec.
 export async function runWeekStep({ db, ownerId, apiKey, reference, weekStart, budgetMs = STEP_BUDGET_MS }) {
   const next = await nextWeekJob(db, ownerId, weekStart);
   if (!next) return { weekStart, done: true, requested: 0, generated: 0 };
+
+  // Temps insuffisant : on reporte l'étape plutôt que de lancer un appel qui expirerait
+  if (budgetMs < MIN_STEP_START_MS) {
+    return { weekStart, done: false, kind: next.kind, requested: 0, generated: 0, skipped: 'budget' };
+  }
 
   const deadline = Date.now() + budgetMs;
   try {
     const r = next.kind === 'script'
       ? await scriptJob({ db, ownerId, apiKey, reference, post: next.post, deadline, maxParts: 1 })
       : await planJob({ db, ownerId, apiKey, reference, weekStart, kind: next.kind, deadline });
+
+    if (!r.partial && r.generated === 0) {
+      throw new Error(
+        `aucune publication ${next.kind} enregistrée (réponse de Claude sans identifiant attendu, ou publications déjà rédigées)`
+      );
+    }
+
     return {
       weekStart,
       done: false,
@@ -649,7 +675,7 @@ export async function runWeekStep({ db, ownerId, apiKey, reference, weekStart, b
     if (err instanceof BudgetExceeded) {
       return { weekStart, done: false, kind: next.kind, requested: 1, generated: 0, partial: true };
     }
-    throw err;
+    throw wrapStepError(next.kind, err);
   }
 }
 
