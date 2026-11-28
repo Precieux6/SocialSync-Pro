@@ -10,6 +10,12 @@ function getKey() {
   return crypto.createHash('sha256').update(raw).digest();
 }
 
+// Vrai si ENCRYPTION_KEY est exploitable. Permet de distinguer « clé absente » de « donnée illisible ».
+export function isEncryptionConfigured() {
+  const raw = process.env.ENCRYPTION_KEY;
+  return Boolean(raw && raw.length >= 32);
+}
+
 export function encryptSecret(plain) {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', getKey(), iv);
@@ -18,7 +24,7 @@ export function encryptSecret(plain) {
   return `v2:${iv.toString('hex')}:${tag.toString('hex')}:${data.toString('hex')}`;
 }
 
-// Retourne null si la valeur est absente, ancienne (non v2) ou corrompue.
+// Retourne null si la valeur est absente, ancienne (non v2), corrompue, ou si la clé ne correspond pas.
 export function decryptSecret(payload) {
   if (!payload) return null;
   const [version, ivHex, tagHex, dataHex] = String(payload).split(':');
